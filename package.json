@@ -1,0 +1,371 @@
+{
+  "name": "dev-toolbox",
+  "displayName": "DevToolbox 开发者工具箱",
+  "description": "时间戳 / Cron / Diff / cURL / JSON / Java转JSON / 正则 / 数据字典 / SQL格式化 / SQL还原 / 二维码 / 编码转换 / 颜色哈希 / UUID 一体化开发者工具箱",
+  "version": "0.6.0",
+  "publisher": "local",
+  "author": "Leo",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CHANGEME/dev-toolbox"
+  },
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "devToolbox.open.timestamp",
+        "title": "DevToolbox: 时间戳转换"
+      },
+      {
+        "command": "devToolbox.open.cron",
+        "title": "DevToolbox: Cron 表达式"
+      },
+      {
+        "command": "devToolbox.open.diff",
+        "title": "DevToolbox: 文本对比"
+      },
+      {
+        "command": "devToolbox.open.curl",
+        "title": "DevToolbox: cURL 客户端"
+      },
+      {
+        "command": "devToolbox.open.json",
+        "title": "DevToolbox: JSON 工具箱"
+      },
+      {
+        "command": "devToolbox.open.javaToJson",
+        "title": "DevToolbox: Java 类转 JSON"
+      },
+      {
+        "command": "devToolbox.open.regex",
+        "title": "DevToolbox: 正则测试"
+      },
+      {
+        "command": "devToolbox.open.dictionary",
+        "title": "DevToolbox: 数据字典中心"
+      },
+      {
+        "command": "devToolbox.open.sqlFormat",
+        "title": "DevToolbox: SQL 格式化"
+      },
+      {
+        "command": "devToolbox.open.sqlRestore",
+        "title": "DevToolbox: SQL 还原"
+      },
+      {
+        "command": "devToolbox.open.qrcode",
+        "title": "DevToolbox: 二维码"
+      },
+      {
+        "command": "devToolbox.open.encode",
+        "title": "DevToolbox: 编码转换"
+      },
+      {
+        "command": "devToolbox.open.colorHash",
+        "title": "DevToolbox: 颜色/哈希/UUID"
+      },
+      {
+        "command": "devToolbox.editor.json",
+        "title": "格式化 JSON"
+      },
+      {
+        "command": "devToolbox.editor.javaToJson",
+        "title": "Java 类转 JSON"
+      },
+      {
+        "command": "devToolbox.editor.sqlFormat",
+        "title": "格式化 SQL"
+      },
+      {
+        "command": "devToolbox.editor.curl",
+        "title": "解析 cURL"
+      },
+      {
+        "command": "devToolbox.editor.timestamp",
+        "title": "时间戳转换"
+      },
+      {
+        "command": "devToolbox.editor.diff",
+        "title": "对比剪贴板"
+      },
+      {
+        "command": "devToolbox.tab.json",
+        "title": "格式化 JSON"
+      },
+      {
+        "command": "devToolbox.tab.sqlFormat",
+        "title": "格式化 SQL"
+      },
+      {
+        "command": "devToolbox.tab.curl",
+        "title": "解析 cURL"
+      },
+      {
+        "command": "devToolbox.tab.javaToJson",
+        "title": "Java 转 JSON"
+      },
+      {
+        "command": "devToolbox.tab.timestamp",
+        "title": "时间戳转换"
+      },
+      {
+        "command": "devToolbox.tab.diff",
+        "title": "对比此文件（填入左侧）"
+      },
+      {
+        "command": "devToolbox.openPanel",
+        "title": "DevToolbox: 打开工具箱",
+        "icon": "$(tools)"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "devToolbox.editorSubmenu",
+        "label": "DevToolbox"
+      },
+      {
+        "id": "devToolbox.tabSubmenu",
+        "label": "DevToolbox"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "submenu": "devToolbox.editorSubmenu",
+          "group": "navigation@100"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "submenu": "devToolbox.tabSubmenu",
+          "group": "navigation@100"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "devToolbox.openPanel",
+          "group": "navigation@1"
+        }
+      ],
+      "devToolbox.tabSubmenu": [
+        {
+          "command": "devToolbox.tab.json"
+        },
+        {
+          "command": "devToolbox.tab.sqlFormat"
+        },
+        {
+          "command": "devToolbox.tab.curl"
+        },
+        {
+          "command": "devToolbox.tab.javaToJson"
+        },
+        {
+          "command": "devToolbox.tab.timestamp"
+        },
+        {
+          "command": "devToolbox.tab.diff"
+        }
+      ],
+      "devToolbox.editorSubmenu": [
+        {
+          "command": "devToolbox.editor.json",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "devToolbox.editor.javaToJson",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "devToolbox.editor.sqlFormat",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "devToolbox.editor.curl",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "devToolbox.editor.timestamp",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "devToolbox.editor.diff",
+          "when": "editorHasSelection"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "DevToolbox",
+      "properties": {
+        "devToolbox.curl.timeoutMs": {
+          "type": "number",
+          "default": 30000,
+          "description": "cURL 请求超时（毫秒）"
+        },
+        "devToolbox.curl.maxResponseSize": {
+          "type": "number",
+          "default": 5242880,
+          "description": "cURL 响应体最大字节数（默认 5MB）"
+        },
+        "devToolbox.sqlFormat.dialect": {
+          "type": "string",
+          "enum": [
+            "sql",
+            "mysql",
+            "postgresql",
+            "plsql",
+            "oracle",
+            "hive",
+            "bigquery",
+            "db2",
+            "transactsql",
+            "singlestoredb",
+            "snowflake",
+            "spark"
+          ],
+          "default": "sql",
+          "description": "SQL 格式化方言"
+        },
+        "devToolbox.sqlFormat.keywordCase": {
+          "type": "string",
+          "enum": [
+            "preserve",
+            "upper",
+            "lower"
+          ],
+          "default": "upper",
+          "description": "关键字大小写"
+        },
+        "devToolbox.general.historySize": {
+          "type": "number",
+          "default": 20,
+          "description": "各工具保留最近使用历史的条数"
+        },
+        "devToolbox.kingdee.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "金蝶云星空站点地址，如 http://server/k3cloud"
+        },
+        "devToolbox.kingdee.dbId": {
+          "type": "string",
+          "default": "",
+          "description": "金蝶账套 Id（数据中心 Id）"
+        },
+        "devToolbox.kingdee.appId": {
+          "type": "string",
+          "default": "",
+          "description": "金蝶 WebAPI 应用 Id（appId）"
+        },
+        "devToolbox.kingdee.user": {
+          "type": "string",
+          "default": "",
+          "description": "金蝶登录用户名"
+        },
+        "devToolbox.kingdee.loginPath": {
+          "type": "string",
+          "default": "Kingdee.BOS.WebApi.ServicesStub.AuthService.ValidateUser.common.kdsvc",
+          "description": "金蝶登录接口路径（不同版本/私有化部署可能不同，可按实际修改）"
+        },
+        "devToolbox.kingdee.metadataPath": {
+          "type": "string",
+          "default": "Kingdee.BOS.WebApi.ServicesStub.DynamicFormService.QueryBusinessInfo.common.kdsvc",
+          "description": "金蝶元数据接口路径（官方为 QueryBusinessInfo；不同版本可能不同，可按实际修改）"
+        },
+        "devToolbox.kingdee.argStyle": {
+          "type": "string",
+          "enum": ["parameters", "named"],
+          "default": "named",
+          "description": "金蝶接口参数风格：named=命名对象形式 {FormId:...}（官方默认），parameters=数组形式 [formId]"
+        },
+        "devToolbox.kingdee.extraHeaders": {
+          "type": "string",
+          "default": "",
+          "description": "附加请求头（JSON 字符串），如需额外鉴权头可填，如 {\"Key\":\"xxx\"}"
+        },
+        "devToolbox.kingdee.lcid": {
+          "type": "number",
+          "default": 2052,
+          "description": "金蝶语言 Id（2052=简体中文）"
+        },
+        "devToolbox.dictionary.naming.tablePrefix": {
+          "type": "string",
+          "default": "",
+          "description": "数据字典命名规范：表名前缀（如 t_），留空表示不检查"
+        },
+        "devToolbox.dictionary.naming.requireComment": {
+          "type": "boolean",
+          "default": true,
+          "description": "数据字典命名规范：表/字段必须有注释"
+        },
+        "devToolbox.dictionary.naming.requirePrimaryKey": {
+          "type": "boolean",
+          "default": true,
+          "description": "数据字典命名规范：表必须有主键"
+        },
+        "devToolbox.dictionary.naming.forbiddenTypes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "TEXT",
+            "BLOB",
+            "FLOAT"
+          ],
+          "description": "数据字典命名规范：禁用的字段类型"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "compile": "tsc --noEmit",
+    "test": "vitest run",
+    "check:pdm": "esbuild scripts/check-pdm.ts --bundle --platform=node --format=cjs --outfile=dist/check-pdm.cjs --log-level=error && node dist/check-pdm.cjs",
+    "check:merge": "esbuild scripts/check-merge.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/check-merge.cjs --log-level=error && node dist/check-merge.cjs",
+    "package": "vsce package --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@types/diff": "^5.2.3",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.11.0",
+    "@types/pg": "^8.23.1",
+    "@types/qrcode": "^1.5.6",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.26.0",
+    "esbuild": "^0.21.5",
+    "jsdom": "^26.1.0",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  },
+  "dependencies": {
+    "@vscode/codicons": "^0.0.36",
+    "cron-parser": "^4.9.0",
+    "cronstrue": "^2.50.0",
+    "diff": "^5.2.0",
+    "fast-xml-parser": "^4.4.0",
+    "js-yaml": "^4.1.0",
+    "jsqr": "^1.4.0",
+    "mssql": "^12.7.11",
+    "mysql2": "^3.10.0",
+    "oracledb": "^26.0.0",
+    "pg": "^8.12.0",
+    "preact": "^10.22.0",
+    "qrcode": "^1.5.3",
+    "sql-formatter": "^15.3.2",
+    "xlsx": "^0.18.5"
+  },
+  "overrides": {
+    "undici": "^6.21.0"
+  }
+}

@@ -1,0 +1,82 @@
+import { WebviewMsg, WvResponse, WvPush, HostCommand, HttpResponseData, DbConnInfo, AppSettings, ProjectMeta } from '../core/messaging';
+import { DictionaryModel } from '../dictionary/model';
+
+declare const acquireVsCodeApi: () => {
+  postMessage(msg: unknown): void;
+  getState(): unknown;
+  setState(s: unknown): void;
+};
+
+interface Bridge {
+  post: (msg: WebviewMsg) => void;
+  pending: Map<number, (r: WvResponse) => void>;
+  pushHandlers: ((p: WvPush) => void)[];
+}
+
+const vscodeApi = acquireVsCodeApi();
+
+export const bridge: Bridge = {
+  post: (msg) => vscodeApi.postMessage(msg),
+  pending: new Map(),
+  pushHandlers: [],
+};
+
+window.addEventListener('message', (e) => {
+  const msg = e.data as WebviewMsg;
+  if (msg.kind === 'response') {
+    const cb = bridge.pending.get(msg.id);
+    if (cb) {
+      bridge.pending.delete(msg.id);
+      cb(msg);
+    }
+  } else if (msg.kind === 'push') {
+    for (const h of bridge.pushHandlers) h(msg);
+  }
+});
+
+import { hostCall } from '../core/messaging';
+
+export function call<T = unknown>(cmd: HostCommand, payload?: unknown, timeoutMs?: number): Promise<T> {
+  return hostCall<T>(bridge.post, bridge.pending, cmd, payload, timeoutMs);
+}
+
+export const host = {
+  getSettings: () => call<AppSettings>('getSettings'),
+  setPanelTitle: (toolId: string) => call('setPanelTitle', { toolId }),
+  copyText: (t: string) => call('copyText', t),
+  getClipboard: () => call<string>('getClipboard'),
+  showMessage: (level: 'info' | 'warn' | 'error', text: string) => call('showMessage', { level, text }),
+  persistState: (key: string, value: unknown) => call('persistState', { key, value }),
+  readState: <T = unknown>(key: string) => call<T | undefined>('readState', { key }),
+  saveTextFile: (defaultName: string, content: string) => call<boolean>('saveTextFile', { defaultName, content }),
+  saveBinaryFile: (defaultName: string, base64: string) => call<boolean>('saveBinaryFile', { defaultName, base64 }),
+  openTextFile: () => call<{ name: string; path?: string; content: string } | null>('openTextFile'),
+  readTextFileAt: (path: string) => call<{ ok: boolean; content?: string; error?: string }>('readTextFileAt', { path }),
+
+  // ---------- 项目库（数据字典持久化，跨工作区复用） ----------
+  projectList: () => call<{ currentId: string | null; projects: ProjectMeta[] }>('projectList'),
+  projectCreate: (name: string) => call<ProjectMeta>('projectCreate', { name }),
+  projectSwitch: (id: string) => call<boolean>('projectSwitch', { id }),
+  projectRename: (id: string, name: string) => call<boolean>('projectRename', { id, name }),
+  projectDelete: (id: string) => call<boolean>('projectDelete', { id }),
+  projectClear: (id: string) => call<boolean>('projectClear', { id }),
+  projectLoad: (id: string) => call<DictionaryModel | null>('projectLoad', { id }),
+  projectSave: (id: string, dict: DictionaryModel) => call<boolean>('projectSave', { id, dict }),
+  projectExport: (id: string, defaultName?: string) => call<boolean>('projectExport', { id, defaultName }),
+  projectImport: () => call<ProjectMeta | null>('projectImport'),
+
+  // ---------- 金蝶云星空 ----------
+  kingdeeFetchMetadata: (formIds: string[], appSecret?: string, password?: string) =>
+    call<{ ok: boolean; text?: string; error?: string }>('kingdeeFetchMetadata', { formIds, appSecret, password }, 60000),
+  kingdeeSaveSecret: (appSecret?: string, password?: string) => call<boolean>('kingdeeSaveSecret', { appSecret, password }),
+  openBinaryFile: () => call<{ name: string; base64: string } | null>('openBinaryFile'),
+  httpRequest: (payload: any) => call<HttpResponseData>('httpRequest', payload, (payload.timeoutMs ?? 30000) + 5000),
+  dbTestConnection: (info: DbConnInfo) => call<string>('dbTestConnection', info, 20000),
+  dbIntrospect: (info: DbConnInfo) => call<DictionaryModel>('dbIntrospect', info, 120000),
+  dbSavePassword: (info: DbConnInfo, password: string) => call('dbSavePassword', { info, password }),
+};
+
+/** 通知宿主 webview 已就绪 */
+export function notifyReady() {
+  bridge.post({ kind: 'push', event: 'ready' as any, toolId: '' } as any);
+}

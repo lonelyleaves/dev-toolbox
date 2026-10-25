@@ -1,0 +1,17 @@
+# 统一换行：仓库内一律 LF，Windows 检出时自动转 CRLF 不影响提交
+* text=auto eol=lf
+
+# 二进制资源
+*.vsix binary
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+
+# 锁定文件与文档不计入语言统计/差异噪音
+package-lock.json linguist-generated=true
+docs/*.md linguist-documentation=true
+CHANGELOG.md linguist-documentation=true
+THIRD_PARTY_NOTICES.md linguist-documentation=true
+test/fixtures/*.json linguist-generated=true

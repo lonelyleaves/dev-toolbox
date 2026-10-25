@@ -1,0 +1,45 @@
+.vscode
+src
+test
+scripts
+dist/check-pdm.cjs
+esbuild.mjs
+tsconfig.json
+*.vsix
+.gitignore
+.codebuddy
+.claude
+.lingma
+.trae
+.idea
+node_modules/@types/**
+node_modules/*/test/**
+node_modules/*/tests/**
+node_modules/*/docs/**
+node_modules/*/.github/**
+node_modules/*/CHANGELOG*
+node_modules/*/HISTORY*
+node_modules/*/LICENSE*
+node_modules/*/README*
+
+# 仅 Webview 侧使用的依赖：esbuild 已把它们打包进 dist/webview，
+# 随包再分发一份纯属浪费（xlsx 7.2M + sql-formatter 4.4M + …约 17M）
+node_modules/sql-formatter/**
+node_modules/xlsx/**
+node_modules/preact/**
+node_modules/qrcode/**
+node_modules/jsqr/**
+node_modules/diff/**
+node_modules/cron-parser/**
+node_modules/cronstrue/**
+node_modules/fast-xml-parser/**
+node_modules/js-yaml/**
+node_modules/@vscode/codicons/**
+# codepage 是 xlsx 的依赖，xlsx 既已排除，它也成了死重（5.9M）
+node_modules/codepage/**
+# 保留：@azure/identity / @js-joda/core 为 tedious(mssql) 顶层 eager require，删除会导致 SQL Server 连接直接失败
+# 宿主侧运行时依赖：mysql2 / pg / mssql / oracledb（esbuild external）
+
+# sourcemap 不随 vsix 分发
+dist/**/*.map
+dist/webview/**/*.map

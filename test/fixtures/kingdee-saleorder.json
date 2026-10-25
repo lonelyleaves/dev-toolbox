@@ -1,0 +1,591 @@
+{
+ "Result": {
+  "ResponseStatus": {
+   "IsSuccess": true,
+   "Errors": [],
+   "MsgCode": 0
+  },
+  "NeedReturnData": {
+   "Id": "SAL_SaleOrder",
+   "Name": [
+    {
+     "Key": 2052,
+     "Value": "销售订单"
+    }
+   ],
+   "PkFieldName": "FID",
+   "PkFieldType": "System.Int32, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089",
+   "Entrys": [
+    {
+     "Id": "be8f270b-6aab-446a-9e11-7fcc39084958",
+     "Key": "FBillHead",
+     "Name": [
+      {
+       "Key": 2052,
+       "Value": "基本信息"
+      }
+     ],
+     "TableName": "T_SAL_ORDER",
+     "ParentKey": null,
+     "EntryName": "SaleOrder",
+     "EntryPkFieldName": "FID",
+     "EntryPkFieldType": "System.Int64, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089",
+     "Fields": [
+      {
+       "Key": "FBillNo",
+       "Name": [
+        {
+         "Key": 2052,
+         "Value": "单据编号"
+        }
+       ],
+       "FieldName": "FBILLNO",
+       "PropertyName": "BillNo",
+       "FieldType": 231,
+       "EntityKey": "FBillHead",
+       "TableName": "T_SAL_ORDER",
+       "ElementType": 12,
+       "MustInput": 0,
+       "EnumObjectId": null,
+       "Extends": null,
+       "DefValue": "",
+       "IsViewVisible": true,
+       "Editlen": 30
+      },
+      {
+       "Key": "FDocumentStatus",
+       "Name": [
+        {
+         "Key": 2052,
+         "Value": "单据状态"
+        }
+       ],
+       "FieldName": "FDOCUMENTSTATUS",
+       "PropertyName": "DocumentStatus",
+       "FieldType": 175,
+       "EntityKey": "FBillHead",
+       "TableName": "T_SAL_ORDER",
+       "ElementType": 40,
+       "MustInput": 0,
+       "EnumObjectId": null,
+       "Extends": [
+        {
+         "Value": "Z",
+         "Caption": "暂存",
+         "Seq": 0,
+         "Invalid": false
+        },
+        {
+         "Value": "A",
+         "Caption": "创建",
+         "Seq": 2,
+         "Invalid": false
+        },
+        {
+         "Value": "B",
+         "Caption": "审核中",
+         "Seq": 3,
+         "Invalid": false
+        },
+        {
+         "Value": "C",
+         "Caption": "已审核",
+         "Seq": 4,
+         "Invalid": false
+        },
+        {
+         "Value": "D",
+         "Caption": "重新审核",
+         "Seq": 5,
+         "Invalid": false
+        }
+       ],
+       "DefValue": "Z",
+       "IsViewVisible": true,
+       "Editlen": 0
+      },
+      {
+       "Key": "FSaleOrgId",
+       "Name": [
+        {
+         "Key": 2052,
+         "Value": "销售组织"
+        }
+       ],
+       "FieldName": "FSALEORGID",
+       "PropertyName": "SaleOrgId",
+       "FieldType": 127,
+       "EntityKey": "FBillHead",
+       "TableName": "T_SAL_ORDER",
+       "ElementType": 7,
+       "MustInput": 1,
+       "EnumObjectId": null,
+       "Extends": null,
+       "DefValue": "",
+       "IsViewVisible": true,
+       "Editlen": 0
+      },
+      {
+       "Key": "FDate",
+       "Name": [
+        {
+         "Key": 2052,
+         "Value": "日期"
+        }
+       ],
+       "FieldName": "FDATE",
+       "PropertyName": "Date",
+       "FieldType": 61,
+       "EntityKey": "FBillHead",
+       "TableName": "T_SAL_ORDER",
+       "ElementType": 4,
+       "MustInput": 1,
+       "EnumObjectId": null,
+       "Extends": null,
+       "DefValue": null,
+       "IsViewVisible": true,
+       "Editlen": 0
+      },
+      {
+       "Key": "FCustId",
+       "Name": [
+        {
+         "Key": 2052,
+         "Value": "客户"
+        }
+       ],
+       "FieldName": "FCUSTID",
+       "PropertyName": "CustId",
+       "FieldType": 127,
+       "EntityKey": "FBillHead",
+       "TableName": "T_SAL_ORDER",
+       "ElementType": 13,
+       "MustInput": 1,
+       "EnumObjectId": null,
+       "Extends": null,
+       "DefValue": "",
+       "IsViewVisible": true,
+       "Editlen": 0
+      },
+      {
+       "Key": "FSaleDeptId",
+       "Name": [
+        {
+         "Key": 2052,
+         "Value": "销售部门"
+        }
+       ],
+       "FieldName": "FSALEDEPTID",
+       "PropertyName": "SaleDeptId",
+       "FieldType": 127,
+       "EntityKey": "FBillHead",
+       "TableName": "T_SAL_ORDER",
+       "ElementType": 13,
+       "MustInput": 0,
+       "EnumObjectId": null,
+       "Extends": null,
+       "DefValue": "",
+       "IsViewVisible": true,
+       "Editlen": 0
+      },
+      {
+       "Key": "FSaleGroupId",
+       "Name": [
+        {
+         "Key": 2052,
+         "Value": "销售组"
+        }
+       ],
+       "FieldName": "FSALEGROUPID",
+       "PropertyName": "SaleGroupId",
+       "FieldType": 127,
+       "EntityKey": "FBillHead",
+       "TableName": "T_SAL_ORDER",
+       "ElementType": 13,
+       "MustInput": 0,
+       "EnumObjectId": null,
+       "Extends": null,
+       "DefValue": "",
+       "IsViewVisible": true,
+       "Editlen": 0
+      },
+      {
+       "Key": "FSalerId",
+       "Name": [
+        {
+         "Key": 2052,
+         "Value": "销售员"
+        }
+       ],
+       "FieldName": "FSALERID",
+       "PropertyName": "SalerId",
+       "FieldType": 127,
+       "EntityKey": "FBillHead",
+       "TableName": "T_SAL_ORDER",
+       "ElementType": 13,
+       "MustInput": 0,
+       "EnumObjectId": null,
+       "Extends": null,
+       "DefValue": "",
+       "IsViewVisible": true,
+       "Editlen": 0
+      },
+      {
+       "Key": "FReceiveId",
+       "Name": [
+        {
+         "Key": 2052,
+         "Value": "收货方"
+        }
+       ],
+       "FieldName": "FRECEIVEID",
+       "PropertyName": "ReceiveId",
+       "FieldType": 127,
+       "EntityKey": "FBillHead",
+       "TableName": "T_SAL_ORDER",
+       "ElementType": 13,
+       "MustInput": 0,
+       "EnumObjectId": null,
+       "Extends": null,
+       "DefValue": "",
+       "IsViewVisible": true,
+       "Editlen": 0
+      },
+      {
+       "Key": "FSettleId",
+       "Name": [
+        {
+         "Key": 2052,
+         "Value": "结算方"
+        }
+       ],
+       "FieldName": "FSETTLEID",
+       "PropertyName": "SettleId",
+       "FieldType": 127,
+       "EntityKey": "FBillHead",
+       "TableName": "T_SAL_ORDER",
+       "ElementType": 13,
+       "MustInput": 0,
+       "EnumObjectId": null,
+       "Extends": null,
+       "DefValue": "",
+       "IsViewVisible": true,
+       "Editlen": 0
+      },
+      {
+       "Key": "FChargeId",
+       "Name": [
+        {
+         "Key": 2052,
+         "Value": "付款方"
+        }
+       ],
+       "FieldName": "FCHARGEID",
+       "PropertyName": "ChargeId",
+       "FieldType": 127,
+       "EntityKey": "FBillHead",
+       "TableName": "T_SAL_ORDER",
+       "ElementType": 13,
+       "MustInput": 0,
+       "EnumObjectId": null,
+       "Extends": null,
+       "DefValue": "",
+       "IsViewVisible": true,
+       "Editlen": 0
+      },
+      {
+       "Key": "FCreatorId",
+       "Name": [
+        {
+         "Key": 2052,
+         "Value": "创建人"
+        }
+       ],
+       "FieldName": "FCREATORID",
+       "PropertyName": "CreatorId",
+       "FieldType": 127,
+       "EntityKey": "FBillHead",
+       "TableName": "T_SAL_ORDER",
+       "ElementType": 17,
+       "MustInput": 0,
+       "EnumObjectId": null,
+       "Extends": null,
+       "DefValue": "",
+       "IsViewVisible": true,
+       "Editlen": 0
+      },
+      {
+       "Key": "FCreateDate",
+       "Name": [
+        {
+         "Key": 2052,
+         "Value": "创建日期"
+        }
+       ],
+       "FieldName": "FCREATEDATE",
+       "PropertyName": "CreateDate",
+       "FieldType": 61,
+       "EntityKey": "FBillHead",
+       "TableName": "T_SAL_ORDER",
+       "ElementType": 26,
+       "MustInput": 0,
+       "EnumObjectId": null,
+       "Extends": null,
+       "DefValue": "",
+       "IsViewVisible": true,
+       "Editlen": 0
+      },
+      {
+       "Key": "FModifierId",
+       "Name": [
+        {
+         "Key": 2052,
+         "Value": "最后修改人"
+        }
+       ],
+       "FieldName": "FMODIFIERID",
+       "PropertyName": "ModifierId",
+       "FieldType": 127,
+       "EntityKey": "FBillHead",
+       "TableName": "T_SAL_ORDER",
+       "ElementType": 27,
+       "MustInput": 0,
+       "EnumObjectId": null,
+       "Extends": null,
+       "DefValue": "",
+       "IsViewVisible": true,
+       "Editlen": 0
+      }
+     ]
+    },
+    {
+     "Id": "29c978b7-dc14-49d4-a9d3-e3224fd97b83",
+     "Key": "FSaleOrderEntry",
+     "Name": [
+      {
+       "Key": 2052,
+       "Value": "订单明细"
+      }
+     ],
+     "TableName": "T_SAL_ORDERENTRY",
+     "ParentKey": null,
+     "EntryName": "SaleOrderEntry",
+     "EntryPkFieldName": "FEntryID",
+     "EntryPkFieldType": "System.Int64, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089",
+     "Fields": [
+      {
+       "Key": "FMaterialId",
+       "Name": [
+        {
+         "Key": 2052,
+         "Value": "物料编码"
+        }
+       ],
+       "FieldName": "FMATERIALID",
+       "PropertyName": "MaterialId",
+       "FieldType": 127,
+       "EntityKey": "FSaleOrderEntry",
+       "TableName": "T_SAL_ORDERENTRY",
+       "ElementType": 13,
+       "MustInput": 1,
+       "EnumObjectId": null,
+       "Extends": null,
+       "DefValue": "",
+       "IsViewVisible": true,
+       "Editlen": 0
+      },
+      {
+       "Key": "FUnitID",
+       "Name": [
+        {
+         "Key": 2052,
+         "Value": "销售单位"
+        }
+       ],
+       "FieldName": "FUNITID",
+       "PropertyName": "UnitId",
+       "FieldType": 127,
+       "EntityKey": "FSaleOrderEntry",
+       "TableName": "T_SAL_ORDERENTRY",
+       "ElementType": 46,
+       "MustInput": 1,
+       "EnumObjectId": null,
+       "Extends": null,
+       "DefValue": "",
+       "IsViewVisible": true,
+       "Editlen": 0
+      },
+      {
+       "Key": "FPrice",
+       "Name": [
+        {
+         "Key": 2052,
+         "Value": "未税单价"
+        }
+       ],
+       "FieldName": "FPRICE",
+       "PropertyName": "Price",
+       "FieldType": 106,
+       "EntityKey": "FSaleOrderEntry",
+       "TableName": "T_SAL_ORDERENTRY_F",
+       "ElementType": 20,
+       "MustInput": 0,
+       "EnumObjectId": null,
+       "Extends": null,
+       "DefValue": "",
+       "IsViewVisible": true,
+       "Editlen": 0
+      },
+      {
+       "Key": "FTaxPrice",
+       "Name": [
+        {
+         "Key": 2052,
+         "Value": "含税单价"
+        }
+       ],
+       "FieldName": "FTAXPRICE",
+       "PropertyName": "TaxPrice",
+       "FieldType": 106,
+       "EntityKey": "FSaleOrderEntry",
+       "TableName": "T_SAL_ORDERENTRY_F",
+       "ElementType": 20,
+       "MustInput": 0,
+       "EnumObjectId": null,
+       "Extends": null,
+       "DefValue": "",
+       "IsViewVisible": true,
+       "Editlen": 0
+      },
+      {
+       "Key": "FBomId",
+       "Name": [
+        {
+         "Key": 2052,
+         "Value": "BOM版本"
+        }
+       ],
+       "FieldName": "FBOMID",
+       "PropertyName": "BomId",
+       "FieldType": 127,
+       "EntityKey": "FSaleOrderEntry",
+       "TableName": "T_SAL_ORDERENTRY",
+       "ElementType": 13,
+       "MustInput": 0,
+       "EnumObjectId": null,
+       "Extends": null,
+       "DefValue": "",
+       "IsViewVisible": true,
+       "Editlen": 0
+      },
+      {
+       "Key": "FPriceUnitId",
+       "Name": [
+        {
+         "Key": 2052,
+         "Value": "计价单位"
+        }
+       ],
+       "FieldName": "FPRICEUNITID",
+       "PropertyName": "PriceUnitId",
+       "FieldType": 127,
+       "EntityKey": "FSaleOrderEntry",
+       "TableName": "T_SAL_ORDERENTRY_F",
+       "ElementType": 46,
+       "MustInput": 1,
+       "EnumObjectId": null,
+       "Extends": null,
+       "DefValue": "",
+       "IsViewVisible": false,
+       "Editlen": 0
+      },
+      {
+       "Key": "FPriceUnitQty",
+       "Name": [
+        {
+         "Key": 2052,
+         "Value": "计价数量"
+        }
+       ],
+       "FieldName": "FPRICEUNITQTY",
+       "PropertyName": "PriceUnitQty",
+       "FieldType": 106,
+       "EntityKey": "FSaleOrderEntry",
+       "TableName": "T_SAL_ORDERENTRY_F",
+       "ElementType": 22,
+       "MustInput": 0,
+       "EnumObjectId": null,
+       "Extends": null,
+       "DefValue": "",
+       "IsViewVisible": false,
+       "Editlen": 0
+      },
+      {
+       "Key": "FPriceCoefficient",
+       "Name": [
+        {
+         "Key": 2052,
+         "Value": "价格系数"
+        }
+       ],
+       "FieldName": "FPRICECOEFFICIENT",
+       "PropertyName": "PriceCoefficient",
+       "FieldType": 106,
+       "EntityKey": "FSaleOrderEntry",
+       "TableName": "T_SAL_ORDERENTRY_F",
+       "ElementType": 2,
+       "MustInput": 0,
+       "EnumObjectId": null,
+       "Extends": null,
+       "DefValue": "1",
+       "IsViewVisible": false,
+       "Editlen": 0
+      },
+      {
+       "Key": "FDiscountRate",
+       "Name": [
+        {
+         "Key": 2052,
+         "Value": "折扣率%"
+        }
+       ],
+       "FieldName": "FDISCOUNTRATE",
+       "PropertyName": "DiscountRate",
+       "FieldType": 106,
+       "EntityKey": "FSaleOrderEntry",
+       "TableName": "T_SAL_ORDERENTRY_F",
+       "ElementType": 54,
+       "MustInput": 0,
+       "EnumObjectId": null,
+       "Extends": null,
+       "DefValue": "0",
+       "IsViewVisible": false,
+       "Editlen": 0
+      },
+      {
+       "Key": "FDiscount",
+       "Name": [
+        {
+         "Key": 2052,
+         "Value": "折扣额"
+        }
+       ],
+       "FieldName": "FDISCOUNT",
+       "PropertyName": "Discount",
+       "FieldType": 106,
+       "EntityKey": "FSaleOrderEntry",
+       "TableName": "T_SAL_ORDERENTRY_F",
+       "ElementType": 55,
+       "MustInput": 0,
+       "EnumObjectId": null,
+       "Extends": null,
+       "DefValue": "",
+       "IsViewVisible": false,
+       "Editlen": 0
+      }
+     ]
+    }
+   ]
+  }
+ }
+}
