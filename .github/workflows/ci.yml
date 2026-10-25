@@ -30,7 +30,7 @@ jobs:
         run: npm run build
 
       - name: 打包 vsix
-        run: npx vsce package --allow-missing-repository
+        run: npx vsce package
 
       - name: 上传 vsix 产物
         uses: actions/upload-artifact@v4
