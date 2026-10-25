@@ -33,6 +33,39 @@ export interface ProjectMeta {
   tableCount: number;
 }
 
+/** 项目级连接配置：跟着项目走，切换项目 = 切换这套连接；凭据一律不落在这里 */
+export interface DbConnectionConfig {
+  client?: 'mysql' | 'postgres' | 'mssql' | 'oracle';
+  host?: string;
+  port?: number;
+  user?: string;
+  /** mysql/mssql: 数据库名；postgres: database；oracle: 服务名 */
+  database?: string;
+}
+
+export interface KingdeeConnectionConfig {
+  baseUrl?: string;
+  dbId?: string;
+  appId?: string;
+  user?: string;
+  lcid?: number;
+  loginPath?: string;
+  metadataPath?: string;
+  argStyle?: 'parameters' | 'named';
+  extraHeaders?: string;
+}
+
+export interface ProjectConfig {
+  connections: {
+    db?: DbConnectionConfig;
+    kingdee?: KingdeeConnectionConfig;
+  };
+}
+
+export function emptyProjectConfig(): ProjectConfig {
+  return { connections: {} };
+}
+
 export type HostCommand =
   | 'getSettings'
   | 'setPanelTitle'
@@ -52,6 +85,10 @@ export type HostCommand =
   | 'projectSave'
   | 'projectExport'
   | 'projectImport'
+  | 'projectGetConfig'
+  | 'projectSaveConfig'
+  | 'projectSaveSecret'
+  | 'projectReadSecretExists'
   | 'kingdeeFetchMetadata'
   | 'kingdeeSaveSecret'
   | 'openBinaryFile'
@@ -118,6 +155,8 @@ export interface DbConnInfo {
   /** mysql/mssql: 数据库名；postgres: database；oracle: 服务名(Service Name) */
   database: string;
   secretKey?: string;
+  /** 所属项目：有值时密码从该项目的凭据里读（Credential 按项目隔离） */
+  projectId?: string;
 }
 
 export type WebviewMsg = WvRequest | WvResponse | WvPush;

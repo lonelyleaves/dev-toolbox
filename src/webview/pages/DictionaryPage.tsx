@@ -3,10 +3,11 @@ import { useState, useMemo, useEffect } from 'preact/hooks';
 import * as XLSX from 'xlsx';
 import { DictionaryModel, TableDef, ColumnDef, emptyDictionary, PARSER_VERSION, migrateDict, makeSourceId, DictSource, SourceKind } from '../../dictionary/model';
 import { mergeDictionaries, applyResolutions, defaultResolutions, removeSource, MergeConflict, MergeStats } from '../../dictionary/merge';
-import { ProjectBar, SourcesPanel, MergePanel, KingdeePanel } from './dictionary/panels';
+import { ProjectBar, SourcesPanel, MergePanel, KingdeePanel, ProjectConfigPanel } from './dictionary/panels';
 import { parsePdm } from '../../dictionary/pdm';
 import { parseDdl } from '../../dictionary/ddl';
 import { parseMarkdownDict } from '../../dictionary/markdown';
+import { emptyProjectConfig, type ProjectConfig } from '../../core/messaging';
 import { diffDictionaries, generateFixSql, mergeBaseIntoTarget, diffReportMarkdown, DiffItem } from '../../dictionary/diffengine';
 import { lintDictionary, applyFixes, suggestComments, acceptSuggestions, Violation, NamingRules } from '../../dictionary/naming';
 import { exportMarkdown, exportHtml, exportMermaid, exportDdl, exportWordHtml, buildExcelSheets, dictStats, dictSearch, referrersOf } from '../../dictionary/exporters';
@@ -58,15 +59,16 @@ function shownName(phys: string, code?: string): string | undefined {
   return c;
 }
 
-type Tab = 'browse' | 'edit' | 'lint' | 'repair' | 'export' | 'er' | 'views' | 'procs' | 'seqs' | 'domains' | 'sources' | 'extend';
-const TAB_ORDER: Tab[] = ['browse', 'edit', 'lint', 'repair', 'export', 'er', 'views', 'procs', 'seqs', 'domains', 'sources', 'extend'];
+type Tab = 'browse' | 'edit' | 'lint' | 'repair' | 'export' | 'er' | 'views' | 'procs' | 'seqs' | 'domains' | 'sources' | 'extend' | 'config';
+const TAB_ORDER: Tab[] = ['browse', 'edit', 'lint', 'repair', 'export', 'er', 'views', 'procs', 'seqs', 'domains', 'sources', 'extend', 'config'];
 const TAB_LABEL: Record<Tab, string> = {
   browse: '浏览', edit: '扩展编辑', lint: '规范检查', repair: '比对修复', export: '导出',
-  er: 'ER 图', views: '视图', procs: '存储过程', seqs: '序列', domains: '域', sources: '来源', extend: '扩展字段',
+  er: 'ER 图', views: '视图', procs: '存储过程', seqs: '序列', domains: '域', sources: '来源', extend: '扩展字段', config: '连接配置',
 };
 const TAB_TITLE: Record<Tab, string> = {
   browse: '浏览表结构和字段详情', edit: '扩展编辑：增删改表/字段/注释', lint: '规范检查：命名规则、注释缺失扫描',
   repair: '比对修复：字典与真实库差异对比', export: '导出为 Markdown/HTML/Word/Excel/DDL', er: 'ER 关系图',
+  config: '连接配置 · 本项目的数据库连接与金蝶连接',
   views: '视图列表', procs: '存储过程/函数', seqs: '序列列表', domains: '域定义',
   sources: '来源管理：查看/刷新/禁用/移除各导入来源',
   extend: '扩展字段：在线库反向导入 + 金蝶云星空（WebAPI / 表单元数据）',
@@ -81,6 +83,9 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
   const [dbSnap, setDbSnap] = useState<DictionaryModel | null>(null);
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);
+  const [projectConfig, setProjectConfig] = useState<ProjectConfig>(emptyProjectConfig());
+  const [secretKeys, setSecretKeys] = useState<string[]>([]);
+  const [configDefaults, setConfigDefaults] = useState<any>({});
   /** 待处理的合并冲突：导入产生差异时先给用户过一遍，再落库 */
   const [pending, setPending] = useState<{
     merged: DictionaryModel;
@@ -92,7 +97,14 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
 
   /** 载入（或迁移出）当前项目的字典 */
   const loadProject = async (id: string | null, list?: ProjectMeta[]) => {
-    if (!id) { setDict(null); return; }
+    if (!id) { setDict(null); setProjectConfig(emptyProjectConfig()); setSecretKeys([]); return; }
+    // 连接配置跟着项目走：切换项目时一起换掉（凭据按项目隔离，这里只拿到"有哪些凭据"）
+    try {
+      const r = await host.projectGetConfig(id);
+      setProjectConfig(r?.config ?? emptyProjectConfig());
+      setConfigDefaults(r?.defaults ?? {});
+    } catch { setProjectConfig(emptyProjectConfig()); }
+    try { setSecretKeys(await host.projectReadSecretExists(id, 'kingdee')); } catch { setSecretKeys([]); }
     const d = await host.projectLoad(id);
     if (d && Array.isArray(d.tables) && d.tables.length > 0) {
       const m = migrateDict(d);
@@ -366,6 +378,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
           onDelete={async () => { if (currentId) { await host.projectDelete(currentId); const next = await refreshProjects(); await loadProject(next); } }}
           onExport={() => { if (currentId) host.projectExport(currentId, `${projects.find((p) => p.id === currentId)?.name || 'project'}.dtproj.json`).catch(() => undefined); }}
           onImport={async () => { await host.projectImport(); const id = await refreshProjects(); await loadProject(id); }}
+          onConfig={() => setTab('config')}
         />
         <Section title="导入数据字典">
           <div class="toolbar">
@@ -429,6 +442,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
         onDelete={async () => { if (currentId) { await host.projectDelete(currentId); const next = await refreshProjects(); await loadProject(next); } }}
         onExport={() => { if (currentId) host.projectExport(currentId, `${projects.find((p) => p.id === currentId)?.name || 'project'}.dtproj.json`).catch(() => undefined); }}
         onImport={async () => { await host.projectImport(); const id = await refreshProjects(); await loadProject(id); }}
+          onConfig={() => setTab('config')}
       />
       <div class="toolbar">
         <strong class="mono">{dict.name}</strong>
@@ -522,15 +536,33 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
           onAdd={importAny}
         />
       )}
+      {tab === 'config' && currentId && (
+        <ProjectConfigPanel
+          projectName={projects.find((x) => x.id === currentId)?.name || '当前项目'}
+          config={projectConfig}
+          savedSecretKeys={secretKeys}
+          defaults={configDefaults}
+          onSave={async (cfg, secrets) => {
+            await host.projectSaveConfig(currentId, cfg);
+            if (secrets.dbPassword) await host.projectSaveSecret(currentId, 'db', { password: secrets.dbPassword });
+            const kv: Record<string, string> = {};
+            if (secrets.appSecret) kv.appSecret = secrets.appSecret;
+            if (secrets.password) kv.password = secrets.password;
+            if (Object.keys(kv).length) await host.projectSaveSecret(currentId, 'kingdee', kv);
+            setProjectConfig(cfg);
+            setSecretKeys(await host.projectReadSecretExists(currentId, 'kingdee'));
+          }}
+        />
+      )}
       {tab === 'extend' && (
         <div>
           <Section title="数据库扩展字段">
             <div class="small muted" style="margin-bottom:6px">
               在已有 PDM 字典上叠加真实库的字段：按表名归一化匹配，库里新增的表/字段会并入，同名差异会弹冲突面板让你选。
             </div>
-            <DbImportForm onImported={(d) => finishImport(d, `${d.name || '数据库'}`, 'db')} />
+            <DbImportForm projectId={currentId} preset={projectConfig.connections?.db} onImported={(d) => finishImport(d, `${d.name || '数据库'}`, 'db')} />
           </Section>
-          <KingdeePanel onImport={(d, name) => finishImport(d, name, 'kingdee')} />
+          <KingdeePanel projectId={currentId} onImport={(d, name) => finishImport(d, name, 'kingdee')} />
         </div>
       )}
     </div>
@@ -538,21 +570,32 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
 }
 
 // ---------- 在线库导入表单 ----------
-function DbImportForm({ onImported }: { onImported: (d: DictionaryModel) => void }) {
-  const [info, setInfo] = useState<DbConnInfo>({ client: 'mysql', host: '127.0.0.1', port: 3306, user: 'root', password: '', database: '' });
+function DbImportForm({ projectId, preset, onImported }: { projectId?: string | null; preset?: ProjectConfig['connections']['db']; onImported: (d: DictionaryModel) => void }) {
+  // 表单初值来自本项目的连接配置；密码不回显，留空则用该项目已保存的密码
+  const [info, setInfo] = useState<DbConnInfo>({
+    client: preset?.client || 'mysql',
+    host: preset?.host || '127.0.0.1',
+    port: preset?.port || 3306,
+    user: preset?.user || 'root',
+    password: '',
+    database: preset?.database || '',
+  });
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState('');
 
+  // 带上 projectId：密码优先从该项目的凭据里取，实现"同一库不同项目不同密码"
+  const conn = { ...info, projectId: projectId ?? undefined };
+
   const test = async () => {
     setBusy('test'); setMsg('');
-    try { setMsg(`✓ ${await host.dbTestConnection(info)}`); } catch (e: any) { setMsg(`✗ ${e?.message || e}`); }
+    try { setMsg(`✓ ${await host.dbTestConnection(conn)}`); } catch (e: any) { setMsg(`✗ ${e?.message || e}`); }
     setBusy('');
   };
   const imp = async () => {
     setBusy('import'); setMsg('');
     try {
-      const d = await host.dbIntrospect(info);
-      if (info.password) await host.dbSavePassword({ ...info, secretKey: undefined }, info.password);
+      const d = await host.dbIntrospect(conn);
+      if (info.password) await host.dbSavePassword({ ...conn, secretKey: undefined }, info.password);
       onImported(d);
     } catch (e: any) { setMsg(`✗ ${e?.message || e}`); }
     setBusy('');

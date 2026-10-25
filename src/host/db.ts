@@ -1,9 +1,15 @@
 import * as vscode from 'vscode';
 import { DbConnInfo } from '../core/messaging';
 import { DictionaryModel, emptyDictionary, TableDef } from '../dictionary/model';
+import { projectSecretKey } from './project-store';
 
 async function resolvePassword(info: DbConnInfo, secrets: vscode.SecretStorage): Promise<string> {
   if (info.password) return info.password;
+  // 项目级凭据优先：同一个库在不同项目里可以是两套密码
+  if (info.projectId) {
+    const raw = await secrets.get(projectSecretKey(info.projectId, 'db'));
+    try { return raw ? String(JSON.parse(raw)?.password ?? '') : ''; } catch { return raw ?? ''; }
+  }
   if (info.secretKey) return (await secrets.get(info.secretKey)) ?? '';
   return '';
 }
@@ -13,6 +19,11 @@ function connKey(info: DbConnInfo): string {
 }
 
 export async function saveDbPassword(info: DbConnInfo, password: string, secrets: vscode.SecretStorage) {
+  if (info.projectId) {
+    const key = projectSecretKey(info.projectId, 'db');
+    await secrets.store(key, JSON.stringify({ password }));
+    return;
+  }
   await secrets.store(connKey(info), password);
 }
 

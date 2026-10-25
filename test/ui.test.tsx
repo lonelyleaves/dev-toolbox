@@ -121,7 +121,7 @@ describe('数据字典：项目栏 / 冲突面板 / 来源面板 冒烟', () => 
     const projects = [{ id: 'p1', name: '制造库', createdAt: '', updatedAt: '', sourceCount: 2, tableCount: 1006 }];
     const { container, unmount } = await mount(h(ProjectBar, {
       projects, currentId: 'p1', onSwitch: () => {}, onCreate: () => {}, onRename: () => {},
-      onClear: () => {}, onDelete: () => {}, onExport: () => {}, onImport: () => {},
+      onClear: () => {}, onDelete: () => {}, onExport: () => {}, onImport: () => {}, onConfig: () => {},
     }));
     const sel = container.querySelector('select') as HTMLSelectElement;
     expect(sel).toBeTruthy();
@@ -168,6 +168,48 @@ describe('数据字典：项目栏 / 冲突面板 / 来源面板 冒烟', () => 
     expect(links).toContain('刷新');
     expect(links).toContain('禁用');
     expect(links).toContain('移除');
+    await unmount();
+  });
+});
+
+describe('项目连接配置面板', () => {
+  const cfg = {
+    connections: {
+      db: { client: 'mysql', host: '10.0.0.5', port: 3306, user: 'root', database: 'erp' } as const,
+      kingdee: { baseUrl: 'http://k3/a', dbId: '001', user: 'admin' } as const,
+    },
+  };
+
+  it('渲染已有连接配置，并标注凭据"已保存"', async () => {
+    const { ProjectConfigPanel } = await import('../src/webview/pages/dictionary/panels');
+    const { container, unmount } = await mount(h(ProjectConfigPanel, {
+      projectName: '制造库', config: cfg, savedSecretKeys: ['password', 'appSecret'], onSave: async () => {},
+    }));
+    expect(container.textContent).toContain('制造库');
+    const vals = [...container.querySelectorAll('input')].map((i) => (i as HTMLInputElement).value);
+    expect(vals).toContain('10.0.0.5');
+    expect(vals).toContain('http://k3/a');
+    expect(container.textContent).toContain('已保存');
+    expect(container.textContent).toContain('不带密码');
+    await unmount();
+  });
+
+  it('保存时把表单值传给回调，未填写的密码不回传', async () => {
+    const { ProjectConfigPanel } = await import('../src/webview/pages/dictionary/panels');
+    let saved: any = null;
+    const { container, unmount } = await mount(h(ProjectConfigPanel, {
+      projectName: '制造库', config: cfg, savedSecretKeys: [], onSave: async (c: any, s: any) => { saved = { c, s }; },
+    }));
+    const btn = [...container.querySelectorAll('button')].find((b) => b.textContent?.includes('保存到此项目'))!;
+    expect(btn).toBeTruthy();
+    btn.click();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(saved).toBeTruthy();
+    expect(saved.c.connections.db.host).toBe('10.0.0.5');
+    expect(saved.c.connections.db.port).toBe(3306);
+    expect(saved.c.connections.kingdee.baseUrl).toBe('http://k3/a');
+    expect(saved.s.dbPassword).toBeUndefined();
+    expect(saved.s.appSecret).toBeUndefined();
     await unmount();
   });
 });

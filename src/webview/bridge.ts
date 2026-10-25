@@ -1,4 +1,4 @@
-import { WebviewMsg, WvResponse, WvPush, HostCommand, HttpResponseData, DbConnInfo, AppSettings, ProjectMeta } from '../core/messaging';
+import { WebviewMsg, WvResponse, WvPush, HostCommand, HttpResponseData, DbConnInfo, AppSettings, ProjectMeta , ProjectConfig } from '../core/messaging';
 import { DictionaryModel } from '../dictionary/model';
 
 declare const acquireVsCodeApi: () => {
@@ -64,11 +64,18 @@ export const host = {
   projectSave: (id: string, dict: DictionaryModel) => call<boolean>('projectSave', { id, dict }),
   projectExport: (id: string, defaultName?: string) => call<boolean>('projectExport', { id, defaultName }),
   projectImport: () => call<ProjectMeta | null>('projectImport'),
+  projectGetConfig: (id: string) =>
+    call<{ config: ProjectConfig; defaults: { kingdee?: any } }>('projectGetConfig', { id }),
+  projectSaveConfig: (id: string, config: ProjectConfig) => call<boolean>('projectSaveConfig', { id, config }),
+  projectSaveSecret: (projectId: string, kind: 'db' | 'kingdee', values: Record<string, string>) =>
+    call<boolean>('projectSaveSecret', { projectId, kind, values }),
+  projectReadSecretExists: (projectId: string, kind: 'db' | 'kingdee') => call<string[]>('projectReadSecretExists', { projectId, kind }),
 
   // ---------- 金蝶云星空 ----------
-  kingdeeFetchMetadata: (formIds: string[], appSecret?: string, password?: string) =>
-    call<{ ok: boolean; text?: string; error?: string }>('kingdeeFetchMetadata', { formIds, appSecret, password }, 60000),
-  kingdeeSaveSecret: (appSecret?: string, password?: string) => call<boolean>('kingdeeSaveSecret', { appSecret, password }),
+  kingdeeFetchMetadata: (formIds: string[], opts?: { projectId?: string; appSecret?: string; password?: string }) =>
+    call<{ ok: boolean; text?: string; error?: string }>('kingdeeFetchMetadata', { formIds, ...(opts || {}) }, 60000),
+  kingdeeSaveSecret: (appSecret?: string, password?: string, projectId?: string) =>
+    call<boolean>('kingdeeSaveSecret', { appSecret, password, projectId }),
   openBinaryFile: () => call<{ name: string; base64: string } | null>('openBinaryFile'),
   httpRequest: (payload: any) => call<HttpResponseData>('httpRequest', payload, (payload.timeoutMs ?? 30000) + 5000),
   dbTestConnection: (info: DbConnInfo) => call<string>('dbTestConnection', info, 20000),

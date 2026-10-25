@@ -11,6 +11,8 @@
  */
 import * as vscode from 'vscode';
 import { doHttpRequest } from './http';
+import { KingdeeConnectionConfig } from '../core/messaging';
+import { projectSecretKey } from './project-store';
 
 export interface KingdeeConfig {
   baseUrl: string;
@@ -23,6 +25,7 @@ export interface KingdeeConfig {
   loginPath?: string;
   metadataPath?: string;
   argStyle?: 'parameters' | 'named';
+  extraHeaders?: Record<string, string>;
 }
 
 export interface KingdeeFetchResult {
@@ -43,6 +46,22 @@ const DEFAULT_METADATA_PATH = 'Kingdee.BOS.WebApi.ServicesStub.DynamicFormServic
 
 function joinUrl(base: string, path: string): string {
   return `${base.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`;
+}
+
+/** 读全局 devToolbox.kingdee.* 设置：仅用于往项目配置里"填充默认值"，运行时不再读取 */
+export function globalKingdeeDefaults(): KingdeeConnectionConfig {
+  const c = readCfg();
+  return {
+    baseUrl: c.baseUrl || undefined,
+    dbId: c.dbId || undefined,
+    appId: c.appId || undefined,
+    user: c.user || undefined,
+    lcid: c.lcid,
+    loginPath: c.loginPath || undefined,
+    metadataPath: c.metadataPath || undefined,
+    argStyle: c.argStyle,
+    extraHeaders: c.extraHeaders && Object.keys(c.extraHeaders).length ? JSON.stringify(c.extraHeaders) : undefined,
+  };
 }
 
 function readCfg() {
@@ -83,18 +102,18 @@ function pickSessionCookie(setCookie: string | string[] | undefined): string {
 
 export const KINGDEE_SECRET_KEY = 'kingdee.credentials';
 
-export async function loadSecret(secrets: vscode.SecretStorage): Promise<{ appSecret?: string; password?: string }> {
+export async function loadSecret(secrets: vscode.SecretStorage, projectId?: string): Promise<{ appSecret?: string; password?: string }> {
   try {
-    const raw = await secrets.get(KINGDEE_SECRET_KEY);
+    const raw = await secrets.get(projectId ? projectSecretKey(projectId, 'kingdee') : KINGDEE_SECRET_KEY);
     return raw ? JSON.parse(raw) : {};
   } catch {
     return {};
   }
 }
 
-export async function saveSecret(secrets: vscode.SecretStorage, appSecret?: string, password?: string) {
-  const cur = await loadSecret(secrets);
-  await secrets.store(KINGDEE_SECRET_KEY, JSON.stringify({
+export async function saveSecret(secrets: vscode.SecretStorage, appSecret?: string, password?: string, projectId?: string) {
+  const cur = await loadSecret(secrets, projectId);
+  await secrets.store(projectId ? projectSecretKey(projectId, 'kingdee') : KINGDEE_SECRET_KEY, JSON.stringify({
     appSecret: appSecret ?? cur.appSecret ?? '',
     password: password ?? cur.password ?? '',
   }));
@@ -125,22 +144,43 @@ async function login(cfg: KingdeeConfig): Promise<string> {
  * 拉取指定表单的元数据，返回原始报文文本。
  * 解析交给 webview 侧的 parseKingdeeMetadata，保持"取数"与"解析"分离（便于粘贴报文复用解析）。
  */
+/**
+ * 拉取指定表单的元数据，返回原始报文文本。
+ *
+ * 连接信息**只来自项目配置**（ProjectConfig.connections.kingdee），凭据按项目存 SecretStorage：
+ * 切换项目 = 切换 ERP 站点与账号，不同客户的库互不串。项目没配连接时直接拒绝，不去读全局设置。
+ * 解析交给 webview 侧的 parseKingdeeMetadata，保持"取数"与"解析"分离（便于粘贴报文复用解析）。
+ */
 export async function kingdeeFetchMetadata(
   formIds: string[],
-  overrides: Partial<KingdeeConfig> = {},
+  opts: { projectId?: string; appSecret?: string; password?: string } = {},
   secrets?: vscode.SecretStorage,
+  loadProjectConfig?: (id: string) => { connections?: { kingdee?: KingdeeConnectionConfig } } | null,
 ): Promise<KingdeeFetchResult> {
   try {
-    const base = readCfg();
-    const sec = secrets ? await loadSecret(secrets) : {};
-    // 注意：overrides 里的 undefined 不能覆盖已取到的值（{...{a:1}, ...{a:undefined}} 会得到 undefined）
-    const cfg: KingdeeConfig = {
-      ...base,
-      appSecret: overrides.appSecret || sec.appSecret || '',
-      password: overrides.password || sec.password || '',
-    };
-    if (!cfg.baseUrl) return { ok: false, error: '未配置 devToolbox.kingdee.baseUrl' };
+    if (!opts.projectId) return { ok: false, error: '当前没有选中项目，无法读取该项目的金蝶连接配置' };
+    const pc = loadProjectConfig?.(opts.projectId)?.connections?.kingdee;
+    if (!pc?.baseUrl) {
+      return { ok: false, error: '当前项目未配置金蝶连接：请在「项目配置 → 金蝶云星空」填写站点地址' };
+    }
     if (!formIds.length) return { ok: false, error: '请至少填写一个表单标识（如 BD_MATERIAL）' };
+
+    const g = readCfg();
+    // 凭据优先用本次输入，其次读该项目的 SecretStorage
+    const sec = secrets ? await loadSecret(secrets, opts.projectId) : {};
+    const cfg: KingdeeConfig = {
+      baseUrl: pc.baseUrl,
+      dbId: pc.dbId || '',
+      appId: pc.appId || '',
+      user: pc.user || '',
+      appSecret: opts.appSecret || sec.appSecret || '',
+      password: opts.password || sec.password || '',
+      lcid: pc.lcid ?? 2052,
+      loginPath: pc.loginPath || g.loginPath || DEFAULT_LOGIN_PATH,
+      metadataPath: pc.metadataPath || g.metadataPath || DEFAULT_METADATA_PATH,
+      argStyle: pc.argStyle || g.argStyle || 'named',
+      extraHeaders: pc.extraHeaders ? safeParseJson(pc.extraHeaders) : (g.extraHeaders || {}),
+    };
 
     const cookie = await login(cfg);
     const chunks: string[] = [];
@@ -155,7 +195,7 @@ export async function kingdeeFetchMetadata(
         headers: {
           'Content-Type': 'application/json',
           ...(cookie ? { Cookie: cookie } : {}),
-          ...(base.extraHeaders || {}),
+          ...(cfg.extraHeaders || {}),
         },
         body: JSON.stringify(body),
         timeoutMs: 30000,
@@ -170,6 +210,11 @@ export async function kingdeeFetchMetadata(
     return { ok: false, error: String(e?.message || e) };
   }
 }
+
+function safeParseJson(s: string): Record<string, string> {
+  try { return JSON.parse(s) as Record<string, string>; } catch { return {}; }
+}
+
 
 function safeParse(s: string): any {
   try { return JSON.parse(s); } catch { return s; }

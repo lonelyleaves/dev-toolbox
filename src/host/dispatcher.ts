@@ -4,8 +4,8 @@ import { HostCommand, AppSettings } from '../core/messaging';
 import { toolById } from '../core/tool-registry';
 import { doHttpRequest } from './http';
 import { testConnection, introspect, saveDbPassword } from './db';
-import { ProjectStore } from './project-store';
-import { kingdeeFetchMetadata, saveSecret, KingdeeFetchResult } from './kingdee';
+import { ProjectStore, projectSecretKey } from './project-store';
+import { kingdeeFetchMetadata, saveSecret, KingdeeFetchResult, globalKingdeeDefaults } from './kingdee';
 
 let context: vscode.ExtensionContext;
 let store: ProjectStore | null = null;
@@ -127,6 +127,37 @@ export async function handleHostCommand(cmd: HostCommand, payload: any, panel: v
       projects().save(id, dict);
       return true;
     }
+    case 'projectGetConfig': {
+      const { id } = payload as { id: string };
+      // defaults 只用于 UI 上的"从全局设置填充"，运行时拉取连接一律读项目配置
+      return { config: projects().loadConfig(id), defaults: { kingdee: globalKingdeeDefaults() } };
+    }
+    case 'projectSaveConfig': {
+      const { id, config } = payload as { id: string; config: any };
+      projects().saveConfig(id, config);
+      return true;
+    }
+    case 'projectSaveSecret': {
+      const { projectId, kind, values } = payload as { projectId: string; kind: 'db' | 'kingdee'; values: Record<string, string> };
+      const key = projectSecretKey(projectId, kind);
+      const curRaw = await context.secrets.get(key);
+      let cur: Record<string, string> = {};
+      try { cur = curRaw ? JSON.parse(curRaw) : {}; } catch { cur = {}; }
+      for (const [k, v] of Object.entries(values || {})) {
+        if (v === undefined || v === null || v === '') continue; // 空值表示"不改"
+        cur[k] = String(v);
+      }
+      await context.secrets.store(key, JSON.stringify(cur));
+      return true;
+    }
+    case 'projectReadSecretExists': {
+      const { projectId, kind } = payload as { projectId: string; kind: 'db' | 'kingdee' };
+      const raw = await context.secrets.get(projectSecretKey(projectId, kind));
+      let keys: string[] = [];
+      try { keys = raw ? Object.keys(JSON.parse(raw)) : []; } catch { keys = []; }
+      return keys;
+    }
+
     case 'projectExport': {
       const { id, defaultName } = payload as { id: string; defaultName?: string };
       const bundle = projects().exportBundle(id);
@@ -143,12 +174,12 @@ export async function handleHostCommand(cmd: HostCommand, payload: any, panel: v
     }
     // ---------- 金蝶云星空 ----------
     case 'kingdeeFetchMetadata': {
-      const p = payload as { formIds: string[]; appSecret?: string; password?: string };
-      return await kingdeeFetchMetadata(p.formIds || [], { appSecret: p.appSecret, password: p.password }, context.secrets);
+      const p = payload as { formIds: string[]; projectId?: string; appSecret?: string; password?: string };
+      return await kingdeeFetchMetadata(p.formIds || [], { projectId: p.projectId, appSecret: p.appSecret, password: p.password }, context.secrets, (id) => projects().loadConfig(id));
     }
     case 'kingdeeSaveSecret': {
-      const { appSecret, password } = payload as { appSecret?: string; password?: string };
-      await saveSecret(context.secrets, appSecret, password);
+      const { appSecret, password, projectId } = payload as { appSecret?: string; password?: string; projectId?: string };
+      await saveSecret(context.secrets, appSecret, password, projectId);
       return true;
     }
     case 'readTextFileAt': {

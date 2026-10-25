@@ -14,9 +14,14 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { DictionaryModel } from '../dictionary/model';
-import { ProjectMeta } from '../core/messaging';
+import { ProjectMeta, ProjectConfig, emptyProjectConfig } from '../core/messaging';
 
-export type { ProjectMeta };
+export type { ProjectMeta, ProjectConfig };
+
+/** 项目级 SecretStorage 键：凭据按项目隔离，切项目 = 切这套凭据 */
+export function projectSecretKey(projectId: string, kind: 'db' | 'kingdee'): string {
+  return `devtoolbox.project.${projectId}.${kind}`;
+}
 
 export interface ProjectIndex {
   version: 1;
@@ -31,11 +36,43 @@ export interface ProjectBundle {
   exportedAt: string;
   project: ProjectMeta;
   dict: DictionaryModel;
+  config?: ProjectConfig;
 }
 
 const INDEX_FILE = 'index.json';
 const DICT_FILE = 'dict.json';
+const CONFIG_FILE = 'config.json';
 
+
+/** 白名单式取连接配置：凭据字段无论如何都不会被写进 config.json 或导出包 */
+function sanitizeConfig(cfg: ProjectConfig | undefined): ProjectConfig {
+  const out = emptyProjectConfig();
+  const db = cfg?.connections?.db;
+  const kd = cfg?.connections?.kingdee;
+  if (db) {
+    out.connections.db = {
+      client: db.client,
+      host: db.host,
+      port: Number.isFinite(Number(db.port)) ? Number(db.port) : undefined,
+      user: db.user,
+      database: db.database,
+    };
+  }
+  if (kd) {
+    out.connections.kingdee = {
+      baseUrl: kd.baseUrl,
+      dbId: kd.dbId,
+      appId: kd.appId,
+      user: kd.user,
+      lcid: Number.isFinite(Number(kd.lcid)) ? Number(kd.lcid) : undefined,
+      loginPath: kd.loginPath,
+      metadataPath: kd.metadataPath,
+      argStyle: kd.argStyle,
+      extraHeaders: kd.extraHeaders,
+    };
+  }
+  return out;
+}
 export class ProjectStore {
   private readonly root: string;
 
@@ -142,12 +179,29 @@ export class ProjectStore {
     }
   }
 
+  /** 读项目连接配置（不存在返回空配置） */
+  loadConfig(id: string): ProjectConfig {
+    try {
+      const raw = fs.readFileSync(path.join(this.dirOf(id), CONFIG_FILE), 'utf8');
+      return sanitizeConfig(JSON.parse(raw) as ProjectConfig);
+    } catch {
+      return emptyProjectConfig();
+    }
+  }
+
+  /** 写项目连接配置（经白名单过滤，凭据不会落地） */
+  saveConfig(id: string, cfg: ProjectConfig) {
+    fs.mkdirSync(this.dirOf(id), { recursive: true });
+    fs.writeFileSync(path.join(this.dirOf(id), CONFIG_FILE), JSON.stringify(sanitizeConfig(cfg), null, 2), 'utf8');
+  }
+
+
   exportBundle(id: string): ProjectBundle {
     const idx = this.readIndex();
     const p = idx.projects.find((x) => x.id === id);
     if (!p) throw new Error(`项目不存在: ${id}`);
     const dict = this.load(id) ?? { version: 1, name: p.name, dialect: 'generic', tables: [], importErrors: [] };
-    return { format: 'dev-toolbox-project', formatVersion: 1, exportedAt: new Date().toISOString(), project: p, dict };
+    return { format: 'dev-toolbox-project', formatVersion: 1, exportedAt: new Date().toISOString(), project: p, dict, config: this.loadConfig(id) };
   }
 
   /** 导入项目包：总是新建项目，避免覆盖已有同名项目 */
@@ -156,6 +210,7 @@ export class ProjectStore {
     const meta = this.create(bundle.project?.name || '导入的项目');
     fs.writeFileSync(path.join(this.dirOf(meta.id), DICT_FILE), JSON.stringify(bundle.dict ?? { version: 1, name: meta.name, dialect: 'generic', tables: [], importErrors: [] }), 'utf8');
     const idx = this.readIndex();
+    this.saveConfig(meta.id, bundle.config ?? emptyProjectConfig());
     const p = idx.projects.find((x) => x.id === meta.id)!;
     p.tableCount = bundle.dict?.tables?.length ?? 0;
     p.sourceCount = bundle.dict?.sources?.length ?? 0;
