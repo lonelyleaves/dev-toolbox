@@ -3,7 +3,7 @@ import { useState, useMemo, useEffect } from 'preact/hooks';
 import * as XLSX from 'xlsx';
 import { DictionaryModel, TableDef, ColumnDef, emptyDictionary, PARSER_VERSION, migrateDict, makeSourceId, DictSource, SourceKind } from '../../dictionary/model';
 import { mergeDictionaries, applyResolutions, defaultResolutions, removeSource, MergeConflict, MergeStats } from '../../dictionary/merge';
-import { ProjectBar, SourcesPanel, MergePanel, KingdeePanel, ProjectConfigPanel, TableList } from './dictionary/panels';
+import { ProjectBar, SourcesPanel, MergePanel, KingdeePanel, ProjectConfigPanel, TableList, CrossProjectDiffPanel } from './dictionary/panels';
 import { parsePdm } from '../../dictionary/pdm';
 import { parseDdl } from '../../dictionary/ddl';
 import { parseMarkdownDict } from '../../dictionary/markdown';
@@ -57,20 +57,43 @@ function shownName(phys: string, code?: string): string | undefined {
   return c;
 }
 
-type Tab = 'browse' | 'edit' | 'lint' | 'repair' | 'export' | 'er' | 'views' | 'procs' | 'seqs' | 'domains' | 'sources' | 'extend' | 'config';
-const TAB_ORDER: Tab[] = ['browse', 'edit', 'lint', 'repair', 'export', 'er', 'views', 'procs', 'seqs', 'domains', 'sources', 'extend', 'config'];
+type Tab = 'browse' | 'edit' | 'lint' | 'repair' | 'export' | 'er' | 'views' | 'procs' | 'seqs' | 'domains' | 'sources' | 'extend' | 'config' | 'xdiff';
+const TAB_ORDER: Tab[] = ['browse', 'edit', 'lint', 'repair', 'xdiff', 'export', 'er', 'views', 'procs', 'seqs', 'domains', 'sources', 'extend', 'config'];
 const TAB_LABEL: Record<Tab, string> = {
-  browse: '浏览', edit: '扩展编辑', lint: '规范检查', repair: '比对修复', export: '导出',
+  browse: '浏览', edit: '扩展编辑', lint: '规范检查', repair: '比对修复', xdiff: '跨项目比对', export: '导出',
   er: 'ER 图', views: '视图', procs: '存储过程', seqs: '序列', domains: '域', sources: '来源', extend: '扩展字段', config: '连接配置',
 };
 const TAB_TITLE: Record<Tab, string> = {
   browse: '浏览表结构和字段详情', edit: '扩展编辑：增删改表/字段/注释', lint: '规范检查：命名规则、注释缺失扫描',
-  repair: '比对修复：字典与真实库差异对比', export: '导出为 Markdown/HTML/Word/Excel/DDL', er: 'ER 关系图',
+  repair: '比对修复：字典与真实库差异对比',
+  xdiff: '跨项目比对：拿当前项目字典和另一个项目逐表逐字段对比',
+  export: '导出为 Markdown/HTML/Word/Excel/DDL', er: 'ER 关系图',
   config: '连接配置 · 本项目的数据库连接与金蝶连接',
   views: '视图列表', procs: '存储过程/函数', seqs: '序列列表', domains: '域定义',
   sources: '来源管理：查看/刷新/禁用/移除各导入来源',
   extend: '扩展字段：在线库反向导入 + 金蝶云星空（WebAPI / 表单元数据）',
 };
+
+/** 跨项目比对结果 → Markdown 摘要（用于复制给同事/贴工单） */
+function diffMarkdown(r: any): string {
+  const s = r?.summary;
+  if (!s) return '（尚无比对结果）';
+  const lines = [
+    '# 跨项目字典比对',
+    '',
+    `- 仅当前项目有：${s.added}`,
+    `- 仅对方项目有：${s.removed}`,
+    `- 两边都有但有差异：${s.modified}`,
+    '',
+    '| 表 | 对象 | 类型 | 变化 |',
+    '| --- | --- | --- | --- |',
+  ];
+  for (const it of (r.items || []).slice(0, 200)) {
+    const ch = (it.changes || []).map((c: any) => `${c.prop}: ${c.from} → ${c.to}`).join('；');
+    lines.push(`| ${it.table} | ${it.object || ''} | ${it.kind} | ${ch} |`);
+  }
+  return lines.join('\n');
+}
 
 export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boolean) => void } = {}) {
   const [dict, setDict] = useState<DictionaryModel | null>(null);
@@ -87,6 +110,9 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
   const [dbSecretKeys, setDbSecretKeys] = useState<string[]>([]);
   const [configDefaults, setConfigDefaults] = useState<any>({});
   const [cacheMeta, setCacheMeta] = useState<any>({});
+  const [diffOther, setDiffOther] = useState('');
+  const [diffResult, setDiffResult] = useState<any>(null);
+  const [diffBusy, setDiffBusy] = useState(false);
   const [configHash, setConfigHash] = useState<any>({});
   /** 待处理的合并冲突：导入产生差异时先给用户过一遍，再落库 */
   const [pending, setPending] = useState<{
@@ -382,6 +408,21 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
     }
   };
 
+  /** 跨项目比对：当前项目字典 vs 另一个项目的字典 */
+  const runCrossDiff = async () => {
+    if (!currentId || !diffOther) return;
+    setDiffBusy(true);
+    try {
+      const r = await host.projectDiff(currentId, diffOther);
+      if (!r?.ok) { alert(`比对失败：${r?.error || '未知错误'}`); return; }
+      setDiffResult(r);
+    } catch (e: any) {
+      alert(`比对失败：${e?.message || e}`);
+    } finally {
+      setDiffBusy(false);
+    }
+  };
+
   /** 连接配置页的「测试连接 / 测试 WebAPI 配置」：先落盘再测，避免测的是没保存的参数 */
   const testConn = async (kind: 'db' | 'kingdee', cfg: ProjectConfig, secrets: any): Promise<string> => {
     if (!currentId) return '未选中项目';
@@ -497,6 +538,19 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
           onImport={async () => { await host.projectImport(); const id = await refreshProjects(); await loadProject(id); }}
           onConfig={() => setTab('config')}
         />
+        <div class="dc-header">
+          <div class="toolbar">
+            <strong>{projects.find((x) => x.id === currentId)?.name || '（未选择项目）'}</strong>
+            <span class="badge">暂无字典，请先导入或拉取</span>
+          </div>
+          <div class="toolbar dc-tabs">
+            {TAB_ORDER.map((t) => (
+              <button key={t} class={`btn${tab === t ? ' primary' : ''}`} onClick={() => setTab(t)} title={TAB_TITLE[t]}>
+                {TAB_LABEL[t]}
+              </button>
+            ))}
+          </div>
+        </div>
         {tab === 'config' ? configPane : (
         <Section title="导入数据字典">
           <div class="toolbar">
@@ -563,6 +617,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
         onImport={async () => { await host.projectImport(); const id = await refreshProjects(); await loadProject(id); }}
           onConfig={() => setTab('config')}
       />
+      <div class="dc-header">
       <div class="toolbar">
         <strong class="mono">{dict.name}</strong>
         <span class="badge">{stats.tables} 表</span>
@@ -577,12 +632,13 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
         <Btn onClick={saveDtcat} title="保存为 .dtcat.json 文件（可进 Git 版本管理）">保存 .dtcat.json</Btn>
         <Btn onClick={() => { setDict(null); setDbSnap(null); host.persistState('dict:last', null).catch(() => undefined); }} title="关闭字典并清除缓存">关闭</Btn>
       </div>
-      <div class="toolbar">
+      <div class="toolbar dc-tabs">
         {TAB_ORDER.map((t) => (
           <button key={t} class={`btn${tab === t ? ' primary' : ''}`} onClick={() => setTab(t)} title={TAB_TITLE[t]}>
             {TAB_LABEL[t]}
           </button>
         ))}
+      </div>
       </div>
 
       {tab === 'browse' && (
@@ -595,7 +651,8 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
         ) : (
         <div class="split">
           <TableList
-            tables={dict.tables}
+            dict={dict}
+                  tables={dict.tables}
             sources={dict.sources || []}
             selected={selected}
             onSelect={(name) => setSelected(name)}
@@ -612,6 +669,22 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
       {tab === 'edit' && table && <EditTable dict={dict} setDict={setDict} table={table} onRename={(newName) => setSelected(newName)} />}
       {tab === 'lint' && <LintPanel dict={dict} setDict={setDict} naming={naming} />}
       {tab === 'repair' && <RepairPanel dict={dict} setDict={setDict} dbSnap={dbSnap} setDbSnap={setDbSnap} />}
+      {tab === 'xdiff' && (
+        <CrossProjectDiffPanel
+          projects={projects}
+          currentId={currentId || ''}
+          otherId={diffOther}
+          onPickOther={setDiffOther}
+          diff={diffResult || {}}
+          loading={diffBusy}
+          onRun={runCrossDiff}
+          onCopy={async () => {
+            await host.copyText(diffMarkdown(diffResult));
+            host.showMessage('info', '差异报告已复制到剪贴板').catch(() => undefined);
+          }}
+        />
+      )}
+
       {tab === 'export' && <ExportPanel dict={dict} />}
       {tab === 'er' && <ErPanel dict={dict} />}
       {tab === 'views' && <ViewsPanel dict={dict} />}

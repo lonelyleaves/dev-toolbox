@@ -120,6 +120,11 @@ export class ProjectStore {
     fs.writeFileSync(this.indexPath, JSON.stringify(idx, null, 2), 'utf8');
   }
 
+
+  /** 取单个项目的元信息（名字等） */
+  getMeta(id: string): ProjectMeta | undefined {
+    return this.readIndex().projects.find((p) => p.id === id);
+  }
   list(): { currentId: string | null; projects: ProjectMeta[] } {
     const idx = this.readIndex();
     return {

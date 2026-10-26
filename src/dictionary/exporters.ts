@@ -1,3 +1,4 @@
+import { dictSearchFast } from './search-index';
 import { DictionaryModel, TableDef } from './model';
 import { createTableSql } from './diffengine';
 
@@ -160,21 +161,18 @@ export function dictStats(dict: DictionaryModel): {
   };
 }
 
-/** 全局搜索：表/字段/注释命中 */
-export function dictSearch(dict: DictionaryModel, keyword: string): { table: string; column?: string; field: string; text: string }[] {
-  const kw = keyword.trim().toLowerCase();
-  if (!kw) return [];
-  const hits: { table: string; column?: string; field: string; text: string }[] = [];
-  for (const t of dict.tables) {
-    if (t.name.toLowerCase().includes(kw)) hits.push({ table: t.name, field: '表名', text: t.name });
-    if (t.comment?.toLowerCase().includes(kw)) hits.push({ table: t.name, field: '表注释', text: t.comment });
-    for (const c of t.columns) {
-      if (c.name.toLowerCase().includes(kw)) hits.push({ table: t.name, column: c.name, field: '字段名', text: c.name });
-      else if (c.comment?.toLowerCase().includes(kw)) hits.push({ table: t.name, column: c.name, field: '注释', text: c.comment });
-    }
-    if (hits.length > 300) break;
-  }
-  return hits;
+/**
+ * 全局搜索：表/字段/注释命中
+ *
+ * 统一走 search-index 的扁平索引：先整表快筛，再回扫字段，
+ * 避免大字典下每次按键都全量遍历嵌套结构。
+ */
+export function dictSearch(
+  dict: DictionaryModel,
+  keyword: string,
+  maxHits = 300,
+): { table: string; column?: string; field: string; text: string }[] {
+  return dictSearchFast(dict, keyword, maxHits);
 }
 
 /** 引用关系：哪些表的外键指向该表 */

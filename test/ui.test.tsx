@@ -397,3 +397,49 @@ describe('侧边栏底部版本信息', () => {
     await unmount();
   });
 });
+
+describe('跨项目比对与布局分区', () => {
+  it('跨项目比对面板：未选项目时给提示，选了才出按钮', async () => {
+    const { CrossProjectDiffPanel } = await import('../src/webview/pages/dictionary/panels');
+    const projects = [
+      { id: 'p1', name: '客户A' }, { id: 'p2', name: '客户B' },
+    ];
+    const { container, unmount } = await mount(h(CrossProjectDiffPanel, {
+      projects, currentId: 'p1', otherId: '', diff: {}, loading: false,
+      onPickOther: () => {}, onRun: () => {}, onCopy: () => {},
+    }));
+    // 下拉里不能出现当前项目自己
+    const opts = [...container.querySelectorAll('option')].map((o) => o.textContent);
+    expect(opts).toContain('客户B');
+    expect(opts).not.toContain('客户A');
+    expect((container.textContent || '')).toContain('选择另一个项目后点「开始比对」');
+    await unmount();
+  });
+
+  it('有结果时显示统计与差异表', async () => {
+    const { CrossProjectDiffPanel } = await import('../src/webview/pages/dictionary/panels');
+    const { container, unmount } = await mount(h(CrossProjectDiffPanel, {
+      projects: [{ id: 'p1', name: 'A' }, { id: 'p2', name: 'B' }],
+      currentId: 'p1', otherId: 'p2', loading: false,
+      diff: { summary: { added: 3, removed: 1, modified: 2, total: 6 }, items: [{ table: 'T_X', object: 'FID', kind: 'modified', changes: [{ prop: '类型', from: 'int', to: 'bigint' }] }] },
+      onPickOther: () => {}, onRun: () => {}, onCopy: () => {},
+    }));
+    const txt = container.textContent || '';
+    expect(txt).toContain('仅当前项目有 3');
+    expect(txt).toContain('有差异 2');
+    expect(txt).toContain('T_X');
+    await unmount();
+  });
+
+  it('页签行是横向滚动容器（不换行下压内容）', async () => {
+    const { DictionaryPage } = await import('../src/webview/pages/DictionaryPage');
+    const { container, unmount } = await mount(h(DictionaryPage, {}));
+    const tabs = container.querySelector('.dc-tabs');
+    expect(tabs).toBeTruthy();
+    const header = container.querySelector('.dc-header');
+    expect(header).toBeTruthy();
+    // 页签行必须在吸顶区内，否则滚动后会被内容盖住
+    expect(header!.contains(tabs!)).toBe(true);
+    await unmount();
+  });
+});

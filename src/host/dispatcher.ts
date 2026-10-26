@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import { HostCommand, AppSettings } from '../core/messaging';
 import { toolById } from '../core/tool-registry';
 import { doHttpRequest } from './http';
+import { diffDictionaries } from '../dictionary/diffengine';
 import { testConnection, introspect, saveDbPassword } from './db';
 import { parseKingdeeMetadata } from '../dictionary/kingdee';
 import { ProjectStore, projectSecretKey, configHashOf, CacheMeta } from './project-store';
@@ -179,6 +180,30 @@ export async function handleHostCommand(cmd: HostCommand, payload: any, panel: v
       return true;
     }
     // 读取某类来源的上次拉取信息（时间 + 是否因改了连接而过期）
+    case 'projectDiff': {
+      const { projectId, otherId } = payload as { projectId: string; otherId: string };
+      try {
+        const a = projects().load(projectId);
+        const b = projects().load(otherId);
+        if (!a || !b) return { ok: false, error: '其中一个项目没有字典数据，无法比对' };
+        const items = diffDictionaries(a, b);
+        const added = items.filter((x) => x.kind === 'added').length;
+        const removed = items.filter((x) => x.kind === 'removed').length;
+        const modified = items.filter((x) => x.kind === 'modified').length;
+        const pa = projects().getMeta(projectId);
+        const pb = projects().getMeta(otherId);
+        return {
+          ok: true,
+          summary: {
+            added, removed, modified, total: items.length,
+            leftName: pa?.name || '当前项目', rightName: pb?.name || '另一个项目',
+          },
+          items: items.slice(0, 500),
+        };
+      } catch (e: any) {
+        return { ok: false, error: String(e?.message || e) };
+      }
+    }
     case 'projectCacheMeta': {
       const { projectId } = payload as { projectId: string };
       const cfg = projects().loadConfig(projectId);

@@ -71,6 +71,10 @@ export const host = {
     call<boolean>('projectSaveSecret', { projectId, kind, values }),
   projectSync: (projectId: string, kind: 'db' | 'kingdee', formIds?: string[]) =>
     call<{ ok: boolean; dict?: any; meta?: any; error?: string }>('projectSync', { projectId, kind, formIds }, 120000),
+  projectDiff: (projectId: string, otherId: string) =>
+    call<{ ok: boolean; summary?: { added: number; removed: number; modified: number; total: number; leftName?: string; rightName?: string }; items?: any[]; error?: string }>(
+      'projectDiff', { projectId, otherId }, 60000,
+    ),
   projectSaveCache: (projectId: string, kind: 'db' | 'kingdee', dict: any, meta?: any) =>
     call<boolean>('projectSaveCache', { projectId, kind, dict, meta }),
   projectCacheMeta: (projectId: string) =>

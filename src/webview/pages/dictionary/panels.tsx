@@ -5,6 +5,7 @@ import { ProjectMeta, ProjectConfig } from '../../../core/messaging';
 import { host } from '../../bridge';
 import { parseKingdeeMetadata } from '../../../dictionary/kingdee';
 import { DictionaryModel, DictSource, SourceKind } from '../../../dictionary/model';
+import { tablesMatching } from '../../../dictionary/search-index';
 import { MergeConflict } from '../../../dictionary/merge';
 
 const KIND_LABEL: Record<SourceKind, string> = {
@@ -524,6 +525,8 @@ function matchFilter(t: any, f: TableFilter): boolean {
  * 用固定行高做虚拟滚动，1 万张表也只渲染可视区的几十行。
  */
 export function TableList(p: {
+  /** 整个字典对象：供扁平搜索索引使用（索引按对象缓存，dict 变了自动重建） */
+  dict: any;
   tables: any[];
   sources?: any[];
   selected?: string;
@@ -539,20 +542,20 @@ export function TableList(p: {
   const kw = (p.keyword || '').trim().toLowerCase();
 
   // 关键字优先：命中列的表排在前面，仍然是"表"级别的结果（不展开字段）
-  const hits = useMemo(() => (kw
-    ? p.tables
-        .map((t) => {
-          const inTable = (t.name || '').toLowerCase().includes(kw) || (t.code || '').toLowerCase().includes(kw) || (t.comment || '').toLowerCase().includes(kw);
-          const col = t.columns.find((c: any) => (c.name || '').toLowerCase().includes(kw) || (c.comment || '').toLowerCase().includes(kw));
-          if (!inTable && !col) return null;
-          return { t, col };
-        })
-        .filter(Boolean) as { t: any; col?: any }[]
-    : []), [p.tables, kw]);
+  const tableByName = useMemo(() => {
+    const m = new Map<string, any>();
+    for (const t of p.tables) m.set((t.name || '').toLowerCase(), t);
+    return m;
+  }, [p.tables]);
+
+  // 关键字优先：命中列的表排在前面，仍然是"表"级别的结果（不展开字段）
+  const hitNames = useMemo(() => (kw ? tablesMatching(p.dict, kw) : []), [kw, p.dict]);
 
   const list = useMemo(
-    () => (kw ? hits.map((h) => h.t) : p.tables.filter((t) => matchFilter(t, filter))),
-    [kw, hits, p.tables, filter],
+    () => (kw
+      ? hitNames.map((n: string) => tableByName.get(n.toLowerCase())).filter(Boolean) as any[]
+      : p.tables.filter((t) => matchFilter(t, filter))),
+    [kw, hitNames, tableByName, p.tables, filter],
   );
 
   const capped = useMemo(() => (kw ? list.slice(0, p.maxHits ?? 200) : list), [kw, list, p.maxHits]);
@@ -613,5 +616,64 @@ export function TableList(p: {
         <div class="small muted" style="padding:4px 2px; flex:none">命中 {list.length} 张，仅列出前 {capped.length} 张，请用更精确的关键字</div>
       )}
     </div>
+  );
+}
+
+/* ---------------- 跨项目比对 ---------------- */
+
+export function CrossProjectDiffPanel(p: {
+  projects: any[];
+  currentId: string;
+  otherId: string;
+  onPickOther: (id: string) => void;
+  diff: { summary?: any; items?: any[] };
+  loading?: boolean;
+  onRun: () => void;
+  onCopy: () => void;
+}) {
+  const s = p.diff?.summary;
+  return (
+    <Section title="跨项目比对">
+      <div class="small muted" style="margin-bottom:8px">
+        拿当前项目的字典，和另一个项目的字典逐表逐字段对比（表名不区分大小写）。
+        常用于：客户 A 库 vs 客户 B 库、生产库 vs 测试库。
+      </div>
+      <div class="row" style="margin-bottom:8px">
+        <span class="small" style="flex:none">对比对象</span>
+        <select value={p.otherId} onInput={(e: any) => p.onPickOther(e.target.value)} title="选择要与当前项目比对的项目">
+          <option value="">（选择另一个项目）</option>
+          {p.projects.filter((x) => x.id !== p.currentId).map((x) => <option value={x.id}>{x.name}</option>)}
+        </select>
+        <Btn primary onClick={p.onRun} disabled={!p.otherId || p.loading}>
+          {p.loading ? '比对中…' : '开始比对'}
+        </Btn>
+        {s && <Btn onClick={p.onCopy}>复制差异报告(MD)</Btn>}
+      </div>
+
+      {!s && <div class="small muted">选择另一个项目后点「开始比对」。</div>}
+      {s && (
+        <>
+          <div class="row" style="margin:6px 0">
+            <span class="badge added">仅当前项目有 {s.added}</span>
+            <span class="badge deleted">仅对方项目有 {s.removed}</span>
+            <span class="badge modified">有差异 {s.modified}</span>
+            <span class="badge">合计 {s.total}</span>
+          </div>
+          <table class="tbl">
+            <thead><tr><th>表</th><th>对象</th><th>类型</th><th>变化</th></tr></thead>
+            <tbody>
+              {(p.diff.items || []).slice(0, 200).map((it: any, i: number) => (
+                <tr key={i}>
+                  <td class="mono">{it.table}</td>
+                  <td class="mono">{it.object}</td>
+                  <td><span class={`badge ${it.kind === 'added' ? 'ok' : it.kind === 'removed' ? 'err' : 'warn'}`}>{it.kind}</span></td>
+                  <td class="small">{(it.changes || []).map((c: any) => `${c.prop}: ${c.from} → ${c.to}`).join('；')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </Section>
   );
 }

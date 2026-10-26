@@ -159,6 +159,7 @@ body {
 
 /* ---------- 按钮 ---------- */
 .btn {
+  white-space: nowrap; /* 窄侧边栏下长文案若换行会顶到相邻按钮 */
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: 1px solid var(--vscode-button-border, transparent);
@@ -454,22 +455,18 @@ ul.plain li:last-child { border-bottom: none; }
 
 /* 双栏：宽度自适应（clamp），高度交给父级 flex，不再用 calc(100% - 60px) 硬编码页头高度 */
 .split { display: flex; gap: 16px; min-height: 0; }
+/* 左栏自身不滚，滚动交给内部的 .vlist；否则吸顶元素会盖住下方的筛选行 */
 .split > .left {
   flex: 0 0 clamp(220px, 26%, 340px);
   min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   border-right: 1px solid var(--vscode-panel-border);
   padding-right: 12px;
+  display: flex;
+  flex-direction: column;
 }
 .split > .right { flex: 1; min-width: 0; min-height: 0; overflow: auto; }
-/* 左栏搜索框吸顶，长列表滚动时仍可随时搜索 */
-.split > .left input[type="text"] {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: var(--vscode-input-background);
-}
 
 /* 窄面板：双栏自动改上下堆叠 */
 @media (max-width: 820px) {
@@ -542,3 +539,38 @@ ul.plain li:last-child { border-bottom: none; }
   display: inline-block;
 }
 .dot.ok { background: var(--vscode-testing-iconPassed, #2ea043); }
+
+/* ---------- 字典中心布局：三层分区，互不遮挡 ----------
+   1) 项目层 ProjectBar：选哪个项目
+   2) 操作层 .dc-header：统计 + 导入操作 + 页签（吸顶，滚动时不被内容压住）
+   3) 内容层：各页签面板，独立滚动
+   要点：吸顶层必须给 z-index 与不透明背景，否则内容滚上来会盖住按钮；
+        页签行 nowrap + 横向滚动，避免窄面板下换行把内容行顶下去。 */
+.dc-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--vscode-editor-background);
+  padding: 8px 0 6px;
+  margin: 0 0 4px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+.dc-tabs {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  margin-bottom: 0;
+}
+.dc-tabs::-webkit-scrollbar { height: 6px; }
+.dc-tabs::-webkit-scrollbar-thumb {
+  background: var(--vscode-scrollbarSlider-background);
+  border-radius: 3px;
+}
+.dc-tabs > .btn { flex: none; }
+
+/* 窄面板：左右留白收窄，给按钮和页签更多空间 */
+@media (max-width: 820px) {
+  .page { padding: 12px 12px 0; }
+  .dc-header { padding: 6px 0 4px; }
+}
