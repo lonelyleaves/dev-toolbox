@@ -4,8 +4,9 @@ import { HostCommand, AppSettings } from '../core/messaging';
 import { toolById } from '../core/tool-registry';
 import { doHttpRequest } from './http';
 import { testConnection, introspect, saveDbPassword } from './db';
-import { ProjectStore, projectSecretKey } from './project-store';
-import { kingdeeFetchMetadata, saveSecret, KingdeeFetchResult, globalKingdeeDefaults } from './kingdee';
+import { parseKingdeeMetadata } from '../dictionary/kingdee';
+import { ProjectStore, projectSecretKey, configHashOf, CacheMeta } from './project-store';
+import { kingdeeFetchMetadata, saveSecret, KingdeeFetchResult, globalKingdeeDefaults, kingdeeTestProject } from './kingdee';
 
 let context: vscode.ExtensionContext;
 let store: ProjectStore | null = null;
@@ -127,10 +128,73 @@ export async function handleHostCommand(cmd: HostCommand, payload: any, panel: v
       projects().save(id, dict);
       return true;
     }
+    // 用本项目的连接重新拉取：结果写缓存（带配置指纹），返回给前端走冲突面板合并
+    case 'projectSync': {
+      const { projectId, kind, formIds } = payload as { projectId: string; kind: 'db' | 'kingdee'; formIds?: string[] };
+      try {
+        const cfg = projects().loadConfig(projectId);
+        if (kind === 'db') {
+          const c = cfg.connections?.db;
+          if (!c?.host || !c?.database) return { ok: false, error: '本项目未配置数据库连接：请在「连接配置 → 数据库连接」填写主机与库名' };
+          const d = await introspect({
+            client: c.client || 'mysql', host: c.host, port: c.port, user: c.user,
+            database: c.database, password: '', projectId,
+          } as any, context.secrets);
+          const meta: CacheMeta = {
+            kind: 'db', importedAt: new Date().toISOString(),
+            configHash: configHashOf(cfg, 'db'), tableCount: d.tables.length,
+          };
+          projects().saveCache(projectId, 'db', d, meta);
+          return { ok: true, dict: d, meta };
+        }
+        const c = cfg.connections?.kingdee;
+        if (!c?.baseUrl) return { ok: false, error: '本项目未配置金蝶连接：请在「连接配置 → 金蝶云星空」填写站点地址' };
+        // 表单标识：优先本次传入，其次用上次缓存里记的
+        const ids = (formIds && formIds.length ? formIds : projects().loadCache(projectId, 'kingdee')?.meta?.formIds) || [];
+        if (!ids.length) return { ok: false, error: '请先在「扩展字段 → 金蝶」填写至少一个表单标识（如 BD_MATERIAL）' };
+        const r = await kingdeeFetchMetadata(ids, { projectId }, context.secrets, (id) => projects().loadConfig(id));
+        if (!r.ok || !r.text) return { ok: false, error: r.error || '拉取失败' };
+        const d = parseKingdeeMetadata(r.text, '金蝶元数据');
+        const meta: CacheMeta = {
+          kind: 'kingdee', importedAt: new Date().toISOString(),
+          configHash: configHashOf(cfg, 'kingdee'), formIds: ids, tableCount: d.tables.length,
+        };
+        projects().saveCache(projectId, 'kingdee', d, meta);
+        return { ok: true, dict: d, meta };
+      } catch (e: any) {
+        return { ok: false, error: String(e?.message || e) };
+      }
+    }
+    // 读取某类来源的上次拉取信息（时间 + 是否因改了连接而过期）
+    case 'projectCacheMeta': {
+      const { projectId } = payload as { projectId: string };
+      const cfg = projects().loadConfig(projectId);
+      const out: Record<string, { importedAt?: string; stale?: boolean; tableCount?: number }> = {};
+      for (const kind of ['db', 'kingdee'] as const) {
+        const c = projects().loadCache(projectId, kind);
+        if (!c) continue;
+        out[kind] = {
+          importedAt: c.meta?.importedAt,
+          tableCount: c.meta?.tableCount,
+          stale: c.meta?.configHash !== configHashOf(cfg, kind),
+        };
+      }
+      return out;
+    }
+    case 'kingdeeTestConfig': {
+      const { projectId } = payload as { projectId: string };
+      const cfg = projects().loadConfig(projectId);
+      return await kingdeeTestProject(cfg.connections?.kingdee || {}, context.secrets, projectId);
+    }
     case 'projectGetConfig': {
       const { id } = payload as { id: string };
       // defaults 只用于 UI 上的"从全局设置填充"，运行时拉取连接一律读项目配置
-      return { config: projects().loadConfig(id), defaults: { kingdee: globalKingdeeDefaults() } };
+      const cfg = projects().loadConfig(id);
+      return {
+        config: cfg,
+        defaults: { kingdee: globalKingdeeDefaults() },
+        hash: { db: configHashOf(cfg, 'db'), kingdee: configHashOf(cfg, 'kingdee') },
+      };
     }
     case 'projectSaveConfig': {
       const { id, config } = payload as { id: string; config: any };

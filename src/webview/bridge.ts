@@ -65,10 +65,14 @@ export const host = {
   projectExport: (id: string, defaultName?: string) => call<boolean>('projectExport', { id, defaultName }),
   projectImport: () => call<ProjectMeta | null>('projectImport'),
   projectGetConfig: (id: string) =>
-    call<{ config: ProjectConfig; defaults: { kingdee?: any } }>('projectGetConfig', { id }),
+    call<{ config: ProjectConfig; defaults: { kingdee?: any }; hash: { db?: string; kingdee?: string } }>('projectGetConfig', { id }),
   projectSaveConfig: (id: string, config: ProjectConfig) => call<boolean>('projectSaveConfig', { id, config }),
   projectSaveSecret: (projectId: string, kind: 'db' | 'kingdee', values: Record<string, string>) =>
     call<boolean>('projectSaveSecret', { projectId, kind, values }),
+  projectSync: (projectId: string, kind: 'db' | 'kingdee', formIds?: string[]) =>
+    call<{ ok: boolean; dict?: any; meta?: any; error?: string }>('projectSync', { projectId, kind, formIds }, 120000),
+  projectCacheMeta: (projectId: string) => call<Record<string, { importedAt?: string; stale?: boolean; tableCount?: number }>>('projectCacheMeta', { projectId }),
+  kingdeeTestConfig: (projectId: string) => call<{ ok: boolean; message: string }>('kingdeeTestConfig', { projectId }, 60000),
   projectReadSecretExists: (projectId: string, kind: 'db' | 'kingdee') => call<string[]>('projectReadSecretExists', { projectId, kind }),
 
   // ---------- 金蝶云星空 ----------

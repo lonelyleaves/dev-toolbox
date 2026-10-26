@@ -451,3 +451,11 @@ ul.plain li:last-child { border-bottom: none; }
   vertical-align: -2px;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* 项目栏连接状态点：灰=未配置，绿=已配置 */
+.dot {
+  width: 8px; height: 8px; border-radius: 50%; flex: none;
+  background: var(--vscode-disabledForeground, #888);
+  display: inline-block;
+}
+.dot.ok { background: var(--vscode-testing-iconPassed, #2ea043); }

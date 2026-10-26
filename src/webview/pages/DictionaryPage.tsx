@@ -85,6 +85,8 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
   const [projectConfig, setProjectConfig] = useState<ProjectConfig>(emptyProjectConfig());
   const [secretKeys, setSecretKeys] = useState<string[]>([]);
   const [configDefaults, setConfigDefaults] = useState<any>({});
+  const [cacheMeta, setCacheMeta] = useState<any>({});
+  const [configHash, setConfigHash] = useState<any>({});
   /** 待处理的合并冲突：导入产生差异时先给用户过一遍，再落库 */
   const [pending, setPending] = useState<{
     merged: DictionaryModel;
@@ -96,14 +98,16 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
 
   /** 载入（或迁移出）当前项目的字典 */
   const loadProject = async (id: string | null, list?: ProjectMeta[]) => {
-    if (!id) { setDict(null); setProjectConfig(emptyProjectConfig()); setSecretKeys([]); return; }
+    if (!id) { setDict(null); setProjectConfig(emptyProjectConfig()); setSecretKeys([]); setCacheMeta({}); return; }
     // 连接配置跟着项目走：切换项目时一起换掉（凭据按项目隔离，这里只拿到"有哪些凭据"）
     try {
       const r = await host.projectGetConfig(id);
       setProjectConfig(r?.config ?? emptyProjectConfig());
       setConfigDefaults(r?.defaults ?? {});
+      setConfigHash(r?.hash ?? {});
     } catch { setProjectConfig(emptyProjectConfig()); }
     try { setSecretKeys(await host.projectReadSecretExists(id, 'kingdee')); } catch { setSecretKeys([]); }
+    try { setCacheMeta(await host.projectCacheMeta(id)); } catch { /* 忽略 */ }
     const d = await host.projectLoad(id);
     if (d && Array.isArray(d.tables) && d.tables.length > 0) {
       const m = migrateDict(d);
@@ -319,6 +323,50 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
       host.showMessage('error', `加载失败: ${e?.message || e}`);
     }
   };
+  /** 「同步」：用本项目的连接重新拉取 → 撤掉旧来源贡献 → 按新结果合并（差异走冲突面板由你确认） */
+  const syncSource = async (id: string, kind: 'db' | 'kingdee') => {
+    if (!currentId) return;
+    try {
+      const r = await host.projectSync(currentId, kind);
+      if (!r?.ok || !r.dict) { alert(`同步失败：${r?.error || '未知错误'}`); return; }
+      const s = (dict?.sources || []).find((x) => x.id === id);
+      const stripped = dict ? removeSource(dict, id).dict : null;
+      applyImport(r.dict, {
+        id,
+        kind,
+        name: s?.name || (kind === 'db' ? '在线库' : '金蝶元数据'),
+        priority: s?.priority ?? (kind === 'db' ? 20 : 20),
+        enabled: true,
+        importedAt: r.meta?.importedAt || new Date().toISOString(),
+        tableCount: r.dict.tables.length,
+      }, { projectId: currentId, base: stripped });
+      setCacheMeta(await host.projectCacheMeta(currentId));
+    } catch (e: any) {
+      alert(`同步失败：${e?.message || e}`);
+    }
+  };
+
+  /** 连接配置页的「测试连接 / 测试 WebAPI 配置」：先落盘再测，避免测的是没保存的参数 */
+  const testConn = async (kind: 'db' | 'kingdee', cfg: ProjectConfig, secrets: any): Promise<string> => {
+    if (!currentId) return '未选中项目';
+    try {
+      await host.projectSaveConfig(currentId, cfg);
+      if (secrets?.dbPassword) await host.projectSaveSecret(currentId, 'db', { password: secrets.dbPassword });
+      const kv: Record<string, string> = {};
+      if (secrets?.appSecret) kv.appSecret = secrets.appSecret;
+      if (secrets?.password) kv.password = secrets.password;
+      if (Object.keys(kv).length) await host.projectSaveSecret(currentId, 'kingdee', kv);
+      setProjectConfig(cfg);
+      if (kind === 'db') {
+        return await host.dbTestConnection({ ...(cfg.connections?.db || {}), password: secrets?.dbPassword || '', projectId: currentId } as any);
+      }
+      const r = await host.kingdeeTestConfig(currentId);
+      return r.ok ? r.message : `✗ ${r.message}`;
+    } catch (e: any) {
+      return `✗ ${e?.message || e}`;
+    }
+  };
+
   const importPdm = async () => { const f = await host.openTextFile(); if (f) await importPdmWith(f); };
   const importDdl = async () => { const f = await host.openTextFile(); if (f) await importDdlWith(f); };
   const importMd = async () => { const f = await host.openTextFile(); if (f) await importMdWith(f); };
@@ -505,6 +553,9 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
           onToggle={toggleSource}
           onRefresh={refreshSource}
           onAdd={importAny}
+          onSync={syncSource}
+          cacheMeta={cacheMeta}
+          hash={configHash}
         />
       )}
       {tab === 'config' && currentId && (
@@ -513,6 +564,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
           config={projectConfig}
           savedSecretKeys={secretKeys}
           defaults={configDefaults}
+          onTest={testConn}
           onSave={async (cfg, secrets) => {
             await host.projectSaveConfig(currentId, cfg);
             if (secrets.dbPassword) await host.projectSaveSecret(currentId, 'db', { password: secrets.dbPassword });

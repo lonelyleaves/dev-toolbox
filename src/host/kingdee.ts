@@ -151,6 +151,46 @@ async function login(cfg: KingdeeConfig): Promise<string> {
  * 切换项目 = 切换 ERP 站点与账号，不同客户的库互不串。项目没配连接时直接拒绝，不去读全局设置。
  * 解析交给 webview 侧的 parseKingdeeMetadata，保持"取数"与"解析"分离（便于粘贴报文复用解析）。
  */
+/** 项目配置 + 凭据 → 完整请求配置（路径等缺省值回落到全局设置） */
+function buildKingdeeConfig(pc: KingdeeConnectionConfig, sec: { appSecret?: string; password?: string }): KingdeeConfig {
+  const g = readCfg();
+  return {
+    baseUrl: pc.baseUrl || '',
+    dbId: pc.dbId || '',
+    appId: pc.appId || '',
+    user: pc.user || '',
+    appSecret: sec.appSecret || '',
+    password: sec.password || '',
+    lcid: pc.lcid ?? 2052,
+    loginPath: pc.loginPath || g.loginPath || DEFAULT_LOGIN_PATH,
+    metadataPath: pc.metadataPath || g.metadataPath || DEFAULT_METADATA_PATH,
+    argStyle: pc.argStyle || g.argStyle || 'named',
+    extraHeaders: pc.extraHeaders ? safeParseJson(pc.extraHeaders) : (g.extraHeaders || {}),
+  };
+}
+
+/** 只验证"配的对不对"：登录一次拿到会话即可，不拉元数据 */
+export async function kingdeeTestProject(
+  pc: KingdeeConnectionConfig,
+  secrets?: vscode.SecretStorage,
+  projectId?: string,
+): Promise<{ ok: boolean; message: string }> {
+  try {
+    if (!pc?.baseUrl) return { ok: false, message: '未填写站点地址（baseUrl）' };
+    const sec = secrets && projectId ? await loadSecret(secrets, projectId) : {};
+    const cfg = buildKingdeeConfig(pc, sec);
+    const cookie = await login(cfg);
+    return {
+      ok: true,
+      message: cookie
+        ? '配置可用：已登录并取得会话（kdservice-sessionid）'
+        : '登录成功但未返回会话 Cookie；若后续拉取失败，检查 extraHeaders 是否需要额外鉴权头',
+    };
+  } catch (e: any) {
+    return { ok: false, message: String(e?.message || e) };
+  }
+}
+
 export async function kingdeeFetchMetadata(
   formIds: string[],
   opts: { projectId?: string; appSecret?: string; password?: string } = {},
@@ -165,22 +205,11 @@ export async function kingdeeFetchMetadata(
     }
     if (!formIds.length) return { ok: false, error: '请至少填写一个表单标识（如 BD_MATERIAL）' };
 
-    const g = readCfg();
-    // 凭据优先用本次输入，其次读该项目的 SecretStorage
     const sec = secrets ? await loadSecret(secrets, opts.projectId) : {};
-    const cfg: KingdeeConfig = {
-      baseUrl: pc.baseUrl,
-      dbId: pc.dbId || '',
-      appId: pc.appId || '',
-      user: pc.user || '',
-      appSecret: opts.appSecret || sec.appSecret || '',
-      password: opts.password || sec.password || '',
-      lcid: pc.lcid ?? 2052,
-      loginPath: pc.loginPath || g.loginPath || DEFAULT_LOGIN_PATH,
-      metadataPath: pc.metadataPath || g.metadataPath || DEFAULT_METADATA_PATH,
-      argStyle: pc.argStyle || g.argStyle || 'named',
-      extraHeaders: pc.extraHeaders ? safeParseJson(pc.extraHeaders) : (g.extraHeaders || {}),
-    };
+    const cfg = buildKingdeeConfig(pc, {
+      appSecret: opts.appSecret || sec.appSecret,
+      password: opts.password || sec.password,
+    });
 
     const cookie = await login(cfg);
     const chunks: string[] = [];

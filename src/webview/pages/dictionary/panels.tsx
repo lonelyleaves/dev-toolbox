@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useState } from 'preact/hooks';
 import { Btn, Section } from '../../components';
-import { ProjectMeta } from '../../../core/messaging';
+import { ProjectMeta, ProjectConfig } from '../../../core/messaging';
 import { host } from '../../bridge';
 import { parseKingdeeMetadata } from '../../../dictionary/kingdee';
 import { DictionaryModel, DictSource, SourceKind } from '../../../dictionary/model';
@@ -17,6 +17,22 @@ export function sourceKindLabel(k: SourceKind): string {
 
 /* ---------------- 项目栏 ---------------- */
 
+/* ---------------- 相对时间 ---------------- */
+
+/** 相对时间：刚刚 / 5 分钟前 / 3 小时前 / 2 天前；超过 30 天直接给日期 */
+export function relTime(iso: string): string {
+  if (!iso) return '-';
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return '-';
+  const diff = Date.now() - t;
+  const abs = Math.abs(diff);
+  const suffix = diff >= 0 ? '前' : '后';
+  if (abs < 60000) return '刚刚';
+  if (abs < 3600000) return `${Math.floor(abs / 60000)} 分钟${suffix}`;
+  if (abs < 86400000) return `${Math.floor(abs / 3600000)} 小时${suffix}`;
+  if (abs < 30 * 86400000) return `${Math.floor(abs / 86400000)} 天${suffix}`;
+  return new Date(t).toLocaleDateString('zh-CN');
+}
 export function ProjectBar(p: {
   projects: ProjectMeta[];
   currentId: string | null;
@@ -31,8 +47,19 @@ export function ProjectBar(p: {
 }) {
   const [name, setName] = useState('');
   const cur = p.projects.find((x) => x.id === p.currentId);
+  const dbOk = !!cur?.configSummary?.db;
+  const kdOk = !!cur?.configSummary?.kingdee;
   return (
     <div class="toolbar" style="flex-wrap:wrap; gap:8px; margin-bottom:10px">
+      <div
+        class="row"
+        title="数据库连接 / 金蝶连接是否已配置（点击前往配置）"
+        onClick={() => p.onConfig()}
+        style="flex:none; gap:5px; cursor:pointer"
+      >
+        <span class={`dot${dbOk ? ' ok' : ''}`} title="数据库连接" />
+        <span class={`dot${kdOk ? ' ok' : ''}`} title="金蝶连接" />
+      </div>
       <select
         value={p.currentId ?? ''}
         onInput={(e) => { const v = (e.target as HTMLSelectElement).value; if (v) p.onSwitch(v); }}
@@ -69,8 +96,18 @@ export function SourcesPanel(p: {
   onToggle: (id: string) => void;
   onRefresh: (id: string) => void;
   onAdd: () => void;
+  onSync: (id: string, kind: 'db' | 'kingdee') => void;
+  cacheMeta?: Record<string, { importedAt?: string; configHash?: string }>;
+  hash?: { db?: string; kingdee?: string };
 }) {
   const sources = p.dict.sources || [];
+
+  /** 判断该来源的缓存是否已过期（连接配置指纹变了） */
+  const staleNow = (id: string, kind: string) => {
+    const m = (p.cacheMeta || {})[kind];
+    const now = (p.hash || {})[kind as 'db' | 'kingdee'];
+    return !!m?.configHash && !!now && m.configHash !== now;
+  };
   if (sources.length === 0) {
     return <Section title="来源"><div class="muted small">暂无来源，点击下方按钮导入 PDM / DDL / Markdown / Excel / 数据库 / 金蝶元数据</div></Section>;
   }
@@ -85,10 +122,21 @@ export function SourcesPanel(p: {
                 <td><span class="badge info">{sourceKindLabel(s.kind)}</span></td>
                 <td class="mono" title={s.path || s.conn || ''}>{s.name}</td>
                 <td>{s.tableCount}</td>
-                <td class="small">{new Date(s.importedAt).toLocaleString('zh-CN')}</td>
+                <td class="small" title={new Date(s.importedAt).toLocaleString('zh-CN')}>{relTime(s.importedAt)}</td>
                 <td>{s.priority}</td>
                 <td>{s.enabled ? '启用' : <span class="muted">已禁用</span>}</td>
                 <td>
+                  {(s.kind === 'db' || s.kind === 'kingdee') && (
+                    <a
+                      class="link"
+                      href="#"
+                      onClick={(e) => { e.preventDefault(); p.onSync(s.id, s.kind as 'db' | 'kingdee'); }}
+                      title="用本项目的连接重新拉取并对比差异，由你确认是否覆盖"
+                    >
+                      同步{staleNow(s.id, s.kind) ? ' · 连接已变更' : ''}
+                    </a>
+                  )}
+                  {' '}
                   {s.path && <a class="link" href="#" onClick={(e) => { e.preventDefault(); p.onRefresh(s.id); }} title="按原路径重新解析该来源">刷新</a>}
                   {' '}
                   <a class="link" href="#" onClick={(e) => { e.preventDefault(); p.onToggle(s.id); }}>{s.enabled ? '禁用' : '启用'}</a>
@@ -259,6 +307,8 @@ export function ProjectConfigPanel(p: {
   projectName: string;
   config: import('../../../core/messaging').ProjectConfig;
   savedSecretKeys: string[];
+  /** 测试连接：返回可直接展示的结果文案 */
+  onTest: (kind: 'db' | 'kingdee', cfg: ProjectConfig, secrets: any) => Promise<string>;
   /** 全局 devToolbox.* 设置的值，仅用于"填充"按钮，运行时不参与取连接 */
   defaults?: { kingdee?: import('../../../core/messaging').KingdeeConnectionConfig };
   onSave: (cfg: import('../../../core/messaging').ProjectConfig, secrets: { dbPassword?: string; appSecret?: string; password?: string }) => Promise<void> | void;
@@ -273,6 +323,20 @@ export function ProjectConfigPanel(p: {
 
   const hasDbSecret = p.savedSecretKeys.includes('password');
   const hasAppSecret = p.savedSecretKeys.includes('appSecret');
+
+  const [testMsg, setTestMsg] = useState('');
+  const [testing, setTesting] = useState<'db' | 'kingdee' | ''>('');
+
+  const runTest = async (kind: 'db' | 'kingdee') => {
+    setTesting(kind); setTestMsg('');
+    try {
+      const msg = await p.onTest(kind, { connections: { db, kingdee: kd } }, { dbPassword: dbPwd || undefined, appSecret: appSecret || undefined, password: pwd || undefined });
+      setTestMsg((kind === 'db' ? '[SQL] ' : '[金蝶] ') + msg);
+    } catch (e: any) {
+      setTestMsg(`✗ ${e?.message || e}`);
+    }
+    setTesting('');
+  };
 
   const set = (obj: any, k: string, v: any) => ({ ...obj, [k]: v });
 
@@ -357,6 +421,12 @@ export function ProjectConfigPanel(p: {
         <div class="row" style="margin-top:10px">
           <Btn primary onClick={save} disabled={busy}>{busy ? '保存中…' : '保存到此项目'}</Btn>
           <Btn onClick={fillFromGlobal} title="把旧版 devToolbox.kingdee.* 全局设置带进当前项目">从全局设置填充</Btn>
+          <Btn onClick={() => runTest('db')} disabled={testing !== ''} title="用本项目的数据库连接参数试连一次">
+            {testing === 'db' ? '测试中…' : '测试 SQL 连接'}
+          </Btn>
+          <Btn onClick={() => runTest('kingdee')} disabled={testing !== ''} title="用本项目的金蝶参数登录一次并校验接口可用">
+            {testing === 'kingdee' ? '测试中…' : '测试 WebAPI 配置'}
+          </Btn>
           {msg && <span class="small mono">{msg}</span>}
         </div>
       </Section>

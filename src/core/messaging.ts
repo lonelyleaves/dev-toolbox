@@ -31,6 +31,8 @@ export interface ProjectMeta {
   updatedAt: string;
   sourceCount: number;
   tableCount: number;
+  /** 本项目的连接配置摘要（用于项目栏的状态点：配没配数据库连接/金蝶连接） */
+  configSummary?: { db: boolean; kingdee: boolean };
 }
 
 /** 项目级连接配置：跟着项目走，切换项目 = 切换这套连接；凭据一律不落在这里 */
@@ -87,6 +89,9 @@ export type HostCommand =
   | 'projectImport'
   | 'projectGetConfig'
   | 'projectSaveConfig'
+  | 'projectSync'
+  | 'projectCacheMeta'
+  | 'kingdeeTestConfig'
   | 'projectSaveSecret'
   | 'projectReadSecretExists'
   | 'kingdeeFetchMetadata'

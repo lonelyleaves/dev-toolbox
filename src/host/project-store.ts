@@ -42,6 +42,27 @@ export interface ProjectBundle {
 const INDEX_FILE = 'index.json';
 const DICT_FILE = 'dict.json';
 const CONFIG_FILE = 'config.json';
+const CACHE_DIR = 'cache';
+
+/** 缓存元信息：拉取时间、配置指纹、金蝶用到的表单标识 */
+export interface CacheMeta {
+  kind: string;
+  importedAt: string;
+  /** 连接配置指纹：改了连接 → 与当前指纹不一致 → 该来源缓存视为过期 */
+  configHash: string;
+  formIds?: string[];
+  tableCount?: number;
+}
+
+/** 连接配置指纹（不含凭据）：用于判断"改了连接没" */
+export function configHashOf(cfg: ProjectConfig | undefined, kind: 'db' | 'kingdee'): string {
+  const c = kind === 'db' ? cfg?.connections?.db : cfg?.connections?.kingdee;
+  if (!c) return '';
+  const s = JSON.stringify(c);
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return `h${h.toString(36)}`;
+}
 
 
 /** 白名单式取连接配置：凭据字段无论如何都不会被写进 config.json 或导出包 */
@@ -101,7 +122,22 @@ export class ProjectStore {
 
   list(): { currentId: string | null; projects: ProjectMeta[] } {
     const idx = this.readIndex();
-    return { currentId: idx.currentId, projects: idx.projects };
+    return {
+      currentId: idx.currentId,
+      // 顺带算出每个项目的连接配置摘要，省得 UI 再为每个项目单独拉一次
+      projects: idx.projects.map((p) => {
+        try {
+          const c = this.loadConfig(p.id);
+          return {
+            ...p,
+            configSummary: {
+              db: !!(c.connections?.db?.host && c.connections?.db?.database),
+              kingdee: !!c.connections?.kingdee?.baseUrl,
+            },
+          };
+        } catch { return { ...p, configSummary: { db: false, kingdee: false } }; }
+      }),
+    };
   }
 
   create(name: string): ProjectMeta {
@@ -195,6 +231,45 @@ export class ProjectStore {
     fs.writeFileSync(path.join(this.dirOf(id), CONFIG_FILE), JSON.stringify(sanitizeConfig(cfg), null, 2), 'utf8');
   }
 
+
+
+  // ---------------- 拉取结果缓存 ----------------
+  // 按"来源类型"缓存到项目目录：断网/换机器也能看到上次拉取的结果；
+  // meta 里存配置指纹，改了连接就能判断这份缓存已过期（stale）
+
+  cacheDir(id: string): string {
+    return path.join(this.dirOf(id), CACHE_DIR);
+  }
+
+  /** 保存拉取结果（字典 + meta） */
+  saveCache(id: string, kind: string, dict: DictionaryModel, meta: CacheMeta) {
+    const dir = this.cacheDir(id);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${kind}.json`), JSON.stringify(dict), 'utf8');
+    fs.writeFileSync(path.join(dir, `${kind}.meta.json`), JSON.stringify(meta), 'utf8');
+  }
+
+  /** 读取上次拉取结果；meta 里带 importedAt / configHash / formIds */
+  loadCache(id: string, kind: string): { dict: DictionaryModel; meta: CacheMeta } | null {
+    try {
+      const dir = this.cacheDir(id);
+      const dict = JSON.parse(fs.readFileSync(path.join(dir, `${kind}.json`), 'utf8'));
+      const meta = JSON.parse(fs.readFileSync(path.join(dir, `${kind}.meta.json`), 'utf8'));
+      return { dict, meta };
+    } catch { return null; }
+  }
+
+  clearCache(id: string, kind?: string) {
+    try {
+      const dir = this.cacheDir(id);
+      if (kind) {
+        fs.rmSync(path.join(dir, `${kind}.json`), { force: true });
+        fs.rmSync(path.join(dir, `${kind}.meta.json`), { force: true });
+        return;
+      }
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch { /* 忽略：清缓存失败不影响主流程 */ }
+  }
 
   exportBundle(id: string): ProjectBundle {
     const idx = this.readIndex();
