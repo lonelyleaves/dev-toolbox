@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import * as vscode from 'vscode';
 import { WebviewMsg, WvRequest } from './messaging';
 import { toolById } from './tool-registry';
@@ -81,6 +82,12 @@ export class ToolboxPanel {
     const dist = vscode.Uri.joinPath(ToolboxPanel.extUri, 'dist', 'webview');
     const jsUri = wv.asWebviewUri(vscode.Uri.joinPath(dist, 'main.js'));
     const cssUri = wv.asWebviewUri(vscode.Uri.joinPath(dist, 'main.css'));
+    // 版本号从扩展自身的 package.json 读，避免 webview 里硬编码、升级后对不上
+    let version = '';
+    try {
+      const pkg = JSON.parse(fs.readFileSync(vscode.Uri.joinPath(ToolboxPanel.extUri, 'package.json').fsPath, 'utf8'));
+      version = String(pkg?.version || '');
+    } catch { version = ''; }
     const nonce = Math.random().toString(36).slice(2);
     return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -91,6 +98,7 @@ export class ToolboxPanel {
 </head>
 <body>
 <div id="root"></div>
+<script nonce="${nonce}">window.__DEVTOOLBOX_VERSION__=${JSON.stringify(version)};</script>
 <script nonce="${nonce}" type="module" src="${jsUri}"></script>
 </body>
 </html>`;

@@ -39,6 +39,11 @@ export interface Prefill {
   ts: number;
 }
 
+/** 扩展版本号：由宿主生成 webview HTML 时注入；取不到就返回空串（宁可不显示，也不显示假的） */
+function appVersion(): string {
+  return String((window as any).__DEVTOOLBOX_VERSION__ || '');
+}
+
 /** 工具检索：命中 id / 名称 / 描述 / 分类（大小写不敏感） */
 function matchTools(query: string) {
   const kw = query.trim().toLowerCase();
@@ -85,6 +90,7 @@ export function App() {
   return (
     <div class="app">
       <div class="nav">
+        <div class="nav-scroll">
         <input
           class="nav-search"
           type="text"
@@ -108,6 +114,10 @@ export function App() {
             </div>
           );
         })}
+        </div>
+        <div class="nav-footer" title={appVersion() ? `DevToolbox v${appVersion()}` : 'DevToolbox'}>
+          {appVersion() ? `DevToolbox v${appVersion()}` : 'DevToolbox'}
+        </div>
       </div>
       <div class="page">
         <div class="page-head">

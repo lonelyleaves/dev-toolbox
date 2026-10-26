@@ -31,13 +31,34 @@ body {
 .app { display: flex; height: 100%; overflow: hidden; }
 
 /* ---------- 左侧导航 ---------- */
+/* 注意：.nav 自己不能滚，否则底部的版本信息会被长长的工具列表顶出视线。
+   正确做法：.nav 作为 flex 列容器，滚动交给内部的 .nav-scroll。 */
 .nav {
   width: 192px;
   min-width: 192px;
   border-right: 1px solid var(--vscode-panel-border);
-  overflow-y: auto;
-  padding: 10px 8px 20px;
+  overflow: hidden;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
   background: color-mix(in srgb, var(--vscode-editor-background) 92%, var(--vscode-foreground) 8%);
+}
+.nav-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 8px 12px;
+}
+.nav-footer {
+  flex: none;
+  padding: 7px 10px;
+  border-top: 1px solid var(--vscode-panel-border);
+  font-size: 11px;
+  opacity: 0.6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: all;
 }
 .nav .nav-search {
   width: 100%;

@@ -1,5 +1,22 @@
 # CHANGELOG
 
+## [0.6.5] - 2026-10-27
+
+### Added
+- 侧边栏左侧底部显示版本信息（`DevToolbox v{版本号}`），鼠标悬停可看到构建日期与扩展 id，
+  文字可选中复制，便于反馈问题时直接贴版本
+
+### Changed
+- `.nav` 改为 flex 列布局：工具列表区（`.nav-scroll`）独立滚动，
+  版本条常驻底部，不会被长列表顶出视线
+
+### Fixed
+- 版本号由宿主在生成 webview HTML 时注入 `window.__DEVTOOLBOX_VERSION__`，
+  不再需要（也无法）在 webview 里硬编码，避免升级后显示与 package.json 不一致
+
+### Tests
+- 新增 2 例：footer 渲染且显示注入的版本号；取不到版本号时只显示名称，不出现 `undefined`
+
 ## [0.6.4] - 2026-10-27
 
 ### Fixed

@@ -369,3 +369,31 @@ describe('同步流程与连接状态指示', () => {
     await unmount();
   });
 });
+
+describe('侧边栏底部版本信息', () => {
+  it('渲染出 .nav-footer 并显示对应版本号', async () => {
+    const { App } = await import('../src/webview/app');
+    (window as any).__DEVTOOLBOX_VERSION__ = '9.9.9';
+    const { container, unmount } = await mount(h(App, {}));
+
+    const footer = container.querySelector('.nav-footer') as HTMLElement;
+    expect(footer).toBeTruthy();
+    expect((footer.textContent || '').trim()).toBe('DevToolbox v9.9.9');
+
+    // 常驻底部：列表区独立滚动，footer 不在滚动容器内
+    const scroll = container.querySelector('.nav-scroll')!;
+    expect(scroll.contains(footer)).toBe(false);
+    await unmount();
+  });
+
+  it('拿不到版本号时只显示名称，不显示 undefined/NaN', async () => {
+    const { App } = await import('../src/webview/app');
+    delete (window as any).__DEVTOOLBOX_VERSION__;
+    const { container, unmount } = await mount(h(App, {}));
+
+    const footer = container.querySelector('.nav-footer') as HTMLElement;
+    expect((footer.textContent || '').trim()).toBe('DevToolbox');
+    expect((footer.textContent || '')).not.toContain('undefined');
+    await unmount();
+  });
+});
