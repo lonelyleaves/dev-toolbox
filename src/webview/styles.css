@@ -101,7 +101,25 @@ body {
   overflow: hidden;
   padding-bottom: 10px;
 }
-.page-body.fill > .split { flex: 1; min-height: 0; }
+/* 注意：页面组件外层通常还有一个无类名的根 div（.split 不是 .page-body 的直接子元素），
+   所以这里用后代选择器；同时把页面根 div 变成 flex 列，否则 .split 拿不到被约束的高度，
+   会出现"左栏滚不动、整页也不滚"（实测 11315 表时必现） */
+.page-body.fill > *:first-child { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.page-body.fill .split { flex: 1; min-height: 0; }
+
+/* 虚拟列表：外层负责滚动，内层用绝对定位只渲染可视行 */
+.vlist { flex: 1; min-height: 0; overflow: auto; position: relative; }
+.vlist-inner { position: relative; width: 100%; }
+.vrow {
+  position: absolute; left: 0; right: 0; height: var(--dt-row-h, 24px);
+  display: flex; align-items: center; gap: 6px; padding: 0 6px;
+  cursor: pointer; white-space: nowrap; overflow: hidden;
+  border-radius: 3px;
+}
+.vrow:hover { background: var(--vscode-list-hoverBackground); }
+.vrow.active { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
+.vrow .vname { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.vrow .vcode { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; opacity: .75; }
 
 .page-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; flex: 0 0 auto; }
 .page-head .page-icon {

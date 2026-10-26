@@ -3,7 +3,7 @@ import { useState, useMemo, useEffect } from 'preact/hooks';
 import * as XLSX from 'xlsx';
 import { DictionaryModel, TableDef, ColumnDef, emptyDictionary, PARSER_VERSION, migrateDict, makeSourceId, DictSource, SourceKind } from '../../dictionary/model';
 import { mergeDictionaries, applyResolutions, defaultResolutions, removeSource, MergeConflict, MergeStats } from '../../dictionary/merge';
-import { ProjectBar, SourcesPanel, MergePanel, KingdeePanel, ProjectConfigPanel } from './dictionary/panels';
+import { ProjectBar, SourcesPanel, MergePanel, KingdeePanel, ProjectConfigPanel, TableList } from './dictionary/panels';
 import { parsePdm } from '../../dictionary/pdm';
 import { parseDdl } from '../../dictionary/ddl';
 import { parseMarkdownDict } from '../../dictionary/markdown';
@@ -30,7 +30,6 @@ function mkSource(kind: SourceKind, name: string, path?: string, tableCount = 0)
 }
 
 /** 浏览树单次最多渲染的表数（大字典性能保护） */
-const TREE_RENDER_CAP = 300;
 /** ER 图最多渲染的表数（每表含列文本，过多会卡） */
 const ER_RENDER_CAP = 60;
 
@@ -475,42 +474,14 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
           </Section>
         ) : (
         <div class="split">
-          <div class="left">
-            <input type="text" style="width:100%;margin-bottom:6px" placeholder="搜索表/字段/中文注释…" value={keyword} onInput={(e) => setKeyword((e.target as HTMLInputElement).value)} />
-            {keyword ? (
-              <ul class="plain small">
-                {hits.slice(0, 100).map((x) => (
-                  <li onClick={() => { setSelected(x.table); setKeyword(''); }} style="cursor:pointer">
-                    <b>{x.table}</b>{x.column ? `.${x.column}` : ''} <span class="muted">{x.field}: {x.text}</span>
-                  </li>
-                ))}
-                {hits.length === 0 && <li class="muted">无匹配</li>}
-              </ul>
-            ) : (
-              <ul class="tree">
-                {dict.tables.slice(0, TREE_RENDER_CAP).map((t) => {
-                  const sub = shownName(t.name, t.code);
-                  return (
-                  <li key={t.name}>
-                    <div class={`node${table?.name === t.name ? ' active' : ''}`} onClick={() => setSelected(t.name)} title={`${t.name}${sub ? ` — ${sub}` : ''}\n${t.columns.length} 字段 | ${t.foreignKeys.length} 外键 | ${t.comment || '无注释'}`}>
-                      <span class="codicon codicon-table" />
-                      <span class="tree-name">{t.name}</span>
-                      {sub && <span class="muted small tree-code">— {sub}</span>}
-                      {t.changeTag && <span class={`badge ${t.changeTag}`}>{t.changeTag}</span>}
-                      <span class="badge info small" style="margin-left:4px">{t.columns.length}</span>
-                    </div>
-                    {table?.name === t.name && t.columns.map((c) => (
-                      <ul><li class="node small"><span class="mono">{c.name}</span>{c.code && c.code !== c.name && ` (${c.code})`} <span class="muted">{c.type}{c.length ? `(${c.length})` : ''}</span>{c.pk && <span class="badge info">PK</span>}</li></ul>
-                    ))}
-                  </li>
-                  );
-                })}
-                {dict.tables.length > TREE_RENDER_CAP && (
-                  <li class="hint">共 {dict.tables.length} 张表，为性能仅渲染前 {TREE_RENDER_CAP} 张，请用上方搜索定位其余表</li>
-                )}
-              </ul>
-            )}
-          </div>
+          <TableList
+            tables={dict.tables}
+            sources={dict.sources || []}
+            selected={selected}
+            onSelect={(name) => setSelected(name)}
+            keyword={keyword}
+            onKeyword={(v) => setKeyword(v)}
+          />
           <div class="right">
             {table && <TableDetail dict={dict} table={table} onJump={jumpTo} />}
           </div>

@@ -213,3 +213,48 @@ describe('项目连接配置面板', () => {
     await unmount();
   });
 });
+
+describe('表列表：虚拟滚动与筛选', () => {
+  const many = Array.from({ length: 1000 }, (_, i) => ({
+    name: `T_TAB_${i}`, code: `表${i}`, comment: i % 3 === 0 ? `注释${i}` : '', origin: { sourceId: 's1', kind: i % 2 ? 'pdm' : 'db' },
+    columns: [{ name: `FID`, type: 'int', pk: i % 5 !== 0 }, { name: 'FNAME', type: 'varchar' }],
+    foreignKeys: [], indexes: [],
+  }));
+
+  it('只渲染可视区，1 万张表也不会铺满 DOM', async () => {
+    const { TableList } = await import('../src/webview/pages/dictionary/panels');
+    const { container, unmount } = await mount(h(TableList, {
+      tables: many, sources: [{ kind: 'pdm', name: 'MFG.pdm' } as any], selected: 'T_TAB_1',
+      onSelect: () => {}, keyword: '', onKeyword: () => {},
+    }));
+    const rows = container.querySelectorAll('.vrow');
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.length).toBeLessThan(60); // 可视区外不渲染
+    const inner = container.querySelector('.vlist-inner') as HTMLElement;
+    expect(inner.style.height).toBe(`${1000 * 24}px`); // 撑出完整滚动高度
+    await unmount();
+  });
+
+  it('左栏只显示表名，不再就地展开字段', async () => {
+    const { TableList } = await import('../src/webview/pages/dictionary/panels');
+    const { container, unmount } = await mount(h(TableList, {
+      tables: many.slice(0, 3), sources: [], selected: 'T_TAB_0', onSelect: () => {}, keyword: '', onKeyword: () => {},
+    }));
+    const text = container.textContent || '';
+    expect(text).toContain('T_TAB_0');
+    expect(text).not.toContain('FNAME'); // 字段不出现在左栏
+    await unmount();
+  });
+
+  it('筛选下拉可用：缺主键 / 按来源', async () => {
+    const { TableList } = await import('../src/webview/pages/dictionary/panels');
+    const { container, unmount } = await mount(h(TableList, {
+      tables: many, sources: [{ kind: 'pdm', name: 'MFG.pdm' } as any], selected: '', onSelect: () => {}, keyword: '', onKeyword: () => {},
+    }));
+    const opts = [...container.querySelectorAll('option')].map((o) => o.textContent);
+    expect(opts).toContain('缺主键');
+    expect(opts).toContain('缺中文注释');
+    expect(opts.some((t) => t?.includes('MFG.pdm'))).toBe(true);
+    await unmount();
+  });
+});

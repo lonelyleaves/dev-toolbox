@@ -363,3 +363,126 @@ export function ProjectConfigPanel(p: {
     </div>
   );
 }
+
+
+/* ---------------- 表列表：虚拟滚动 + 筛选 ---------------- */
+
+const ROW_H = 24; // 行高固定，才能用 scrollTop 直接算可视区间
+
+export type TableFilter = 'all' | 'noComment' | 'noPk' | 'changed' | `kind:${string}`;
+
+export function filterLabel(f: TableFilter, sources: any[]): string {
+  if (f === 'all') return '全部表';
+  if (f === 'noComment') return '缺中文注释';
+  if (f === 'noPk') return '缺主键';
+  if (f === 'changed') return '有变更标记';
+  const kind = String(f).slice(5);
+  const s = sources.find((x) => x.kind === kind);
+  return `来源：${s?.name || kind}`;
+}
+
+function matchFilter(t: any, f: TableFilter): boolean {
+  switch (f) {
+    case 'noComment': return !(t.comment || t.code);
+    case 'noPk': return !t.columns.some((c: any) => c.pk);
+    case 'changed': return !!t.changeTag;
+    case 'all': return true;
+    default: {
+      const kind = String(f).slice(5);
+      return (t.origin?.kind || 'unknown') === kind;
+    }
+  }
+}
+
+/**
+ * 左栏表列表：只显示表名（不再就地展开字段，字段看右侧详情），
+ * 用固定行高做虚拟滚动，1 万张表也只渲染可视区的几十行。
+ */
+export function TableList(p: {
+  tables: any[];
+  sources?: any[];
+  selected?: string;
+  onSelect: (name: string) => void;
+  keyword: string;
+  onKeyword: (v: string) => void;
+  maxHits?: number;
+}) {
+  const [filter, setFilter] = useState<TableFilter>('all');
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewH, setViewH] = useState(600);
+  const sources = p.sources || [];
+  const kw = (p.keyword || '').trim().toLowerCase();
+
+  // 关键字优先：命中列的表排在前面，仍然是"表"级别的结果（不展开字段）
+  const hits = kw
+    ? p.tables
+        .map((t) => {
+          const inTable = (t.name || '').toLowerCase().includes(kw) || (t.code || '').toLowerCase().includes(kw) || (t.comment || '').toLowerCase().includes(kw);
+          const col = t.columns.find((c: any) => (c.name || '').toLowerCase().includes(kw) || (c.comment || '').toLowerCase().includes(kw));
+          if (!inTable && !col) return null;
+          return { t, col };
+        })
+        .filter(Boolean) as { t: any; col?: any }[]
+    : [];
+
+  const list = kw ? hits.map((h) => h.t) : p.tables.filter((t) => matchFilter(t, filter));
+  const capped = kw ? list.slice(0, p.maxHits ?? 200) : list;
+  const total = kw ? list.length : capped.length;
+
+  const start = Math.max(0, Math.floor(scrollTop / ROW_H) - 4);
+  const end = Math.min(capped.length, Math.ceil((scrollTop + viewH) / ROW_H) + 4);
+  const slice = capped.slice(start, end);
+
+  const kinds = [...new Set(p.tables.map((t) => t.origin?.kind || 'unknown'))];
+
+  return (
+    <div class="left" style="display:flex; flex-direction:column; min-height:0; overflow:hidden">
+      <div class="row" style="margin-bottom:6px; flex:none">
+        <input
+          type="text"
+          class="mono"
+          style="flex:1; min-width:0"
+          placeholder="搜索表名/中文名/字段名…"
+          value={p.keyword}
+          onInput={(e: any) => p.onKeyword(e.target.value)}
+        />
+      </div>
+      <div class="row" style="margin-bottom:6px; flex:none">
+        <select value={filter} disabled={!!kw} onInput={(e: any) => setFilter(e.target.value as TableFilter)} title="按条件筛选表（有搜索关键字时以搜索结果为准）">
+          <option value="all">全部表</option>
+          <option value="noComment">缺中文注释</option>
+          <option value="noPk">缺主键</option>
+          <option value="changed">有变更标记</option>
+          {kinds.map((k) => <option value={`kind:${k}`}>{filterLabel(`kind:${k}` as TableFilter, sources)}</option>)}
+        </select>
+        <span class="small muted" style="margin-left:6px">{total} 张</span>
+      </div>
+
+      <div
+        class="vlist"
+        onScroll={(e: any) => { setScrollTop(e.currentTarget.scrollTop); setViewH(e.currentTarget.clientHeight || viewH); }}
+      >
+        {capped.length === 0 && <div class="small muted" style="padding:8px">没有匹配的表</div>}
+        <div class="vlist-inner" style={`height:${capped.length * ROW_H}px`}>
+          {slice.map((t, i) => (
+            <div
+              key={t.name}
+              class={`vrow${p.selected === t.name ? ' active' : ''}`}
+              style={`top:${(start + i) * ROW_H}px`}
+              onClick={() => p.onSelect(t.name)}
+              title={`${t.name}${t.code ? ` · ${t.code}` : ''}（${t.columns.length} 字段）`}
+            >
+              <span class="vname mono">{t.name}</span>
+              {t.code && <span class="vcode small">{t.code}</span>}
+              <span class="small muted" style="margin-left:auto; flex:none">{t.columns.length}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {kw && list.length > capped.length && (
+        <div class="small muted" style="padding:4px 2px; flex:none">命中 {list.length} 张，仅列出前 {capped.length} 张，请用更精确的关键字</div>
+      )}
+    </div>
+  );
+}
