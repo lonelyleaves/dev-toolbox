@@ -81,8 +81,8 @@ function diffMarkdown(r: any): string {
   const lines = [
     '# 跨项目字典比对',
     '',
-    `- 仅当前项目有：${s.added}`,
-    `- 仅对方项目有：${s.removed}`,
+    `- 仅当前项目有：${s.onlyCurrent ?? s.removed}`,
+    `- 仅对方项目有：${s.onlyOther ?? s.added}`,
     `- 两边都有但有差异：${s.modified}`,
     '',
     '| 表 | 对象 | 类型 | 变化 |',
@@ -231,6 +231,17 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
    * projectId/base 两个入参必须显式传：state 更新是异步的，
    * 靠闭包里的 currentId/dict 会拿到旧值（建项目后立即递归 → 无限建项目）。
    */
+  /** 保存字典到项目：失败必须让用户知道（静默失败 = 换工作区才发现数据没了） */
+  const saveOrWarn = (id: string, d: DictionaryModel) => {
+    host
+      .projectSave(id, d)
+      .catch((e: any) => {
+        host
+          .showMessage('error', `保存到项目失败：${e?.message || e}\n请立即「导出项目包」备份，避免丢失`)
+          .catch(() => undefined);
+      });
+  };
+
   const applyImport = (
     d: DictionaryModel,
     source: DictSource,
@@ -256,7 +267,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
       setDict(m);
       setSelected(m.tables[0]?.name || '');
       setTab('browse');
-      host.projectSave(id, m).catch(() => undefined);
+      saveOrWarn(id, m);
       host.showMessage('info', `导入完成：${m.tables.length} 张表`).catch(() => undefined);
       return false;
     }
@@ -274,7 +285,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
     const m = migrateDict(r.dict);
     setDict(m);
     setTab('browse');
-    host.projectSave(id, m).catch(() => undefined);
+    saveOrWarn(id, m);
     host.showMessage('info', `合并完成：新增 ${r.stats.tablesAdded} 表 / ${r.stats.columnsAdded} 字段，共 ${m.tables.length} 张表`).catch(() => undefined);
     return false;
   };
@@ -286,7 +297,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
     setDict(finalDict);
     setPending(null);
     setTab('browse');
-    host.projectSave(currentId, finalDict).catch(() => undefined);
+    saveOrWarn(currentId, finalDict);
     // 同步流程：只有确认合并成功才写缓存，取消则不写（否则缓存与字典会不一致）
     if (pending.sync) {
       host

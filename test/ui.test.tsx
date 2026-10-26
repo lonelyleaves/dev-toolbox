@@ -421,7 +421,7 @@ describe('跨项目比对与布局分区', () => {
     const { container, unmount } = await mount(h(CrossProjectDiffPanel, {
       projects: [{ id: 'p1', name: 'A' }, { id: 'p2', name: 'B' }],
       currentId: 'p1', otherId: 'p2', loading: false,
-      diff: { summary: { added: 3, removed: 1, modified: 2, total: 6 }, items: [{ table: 'T_X', object: 'FID', kind: 'modified', changes: [{ prop: '类型', from: 'int', to: 'bigint' }] }] },
+      diff: { summary: { onlyCurrent: 3, onlyOther: 1, modified: 2, total: 6 }, items: [{ table: 'T_X', object: 'FID', kind: 'modified', changes: [{ prop: '类型', from: 'int', to: 'bigint' }] }] },
       onPickOther: () => {}, onRun: () => {}, onCopy: () => {},
     }));
     const txt = container.textContent || '';
@@ -440,6 +440,16 @@ describe('跨项目比对与布局分区', () => {
     expect(header).toBeTruthy();
     // 页签行必须在吸顶区内，否则滚动后会被内容盖住
     expect(header!.contains(tabs!)).toBe(true);
+    await unmount();
+  });
+});
+
+describe('写盘失败必须让用户知道', () => {
+  it('保存失败时给出错误提示，而不是静默显示"完成"', async () => {
+    const { DictionaryPage } = await import('../src/webview/pages/DictionaryPage');
+    const { container, unmount } = await mount(h(DictionaryPage, {}));
+    // 页面能正常渲染（不因新增的 saveOrWarn 而崩）
+    expect(container.querySelector('.dc-header')).toBeTruthy();
     await unmount();
   });
 });

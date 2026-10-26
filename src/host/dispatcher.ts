@@ -187,15 +187,20 @@ export async function handleHostCommand(cmd: HostCommand, payload: any, panel: v
         const b = projects().load(otherId);
         if (!a || !b) return { ok: false, error: '其中一个项目没有字典数据，无法比对' };
         const items = diffDictionaries(a, b);
-        const added = items.filter((x) => x.kind === 'added').length;
-        const removed = items.filter((x) => x.kind === 'removed').length;
+        // 注意语义：diffDictionaries(当前, 对方) 里
+        //   added   = 对方有、当前没有 → 仅对方项目有
+        //   removed = 当前有、对方没有 → 仅当前项目有
+        // 这里直接按"归属方"命名，避免调用方再靠记忆二次翻译
+        const onlyOther = items.filter((x) => x.kind === 'added').length;
+        const onlyCurrent = items.filter((x) => x.kind === 'removed').length;
         const modified = items.filter((x) => x.kind === 'modified').length;
         const pa = projects().getMeta(projectId);
         const pb = projects().getMeta(otherId);
         return {
           ok: true,
           summary: {
-            added, removed, modified, total: items.length,
+            added: onlyOther, removed: onlyCurrent, modified,
+            onlyCurrent, onlyOther, total: items.length,
             leftName: pa?.name || '当前项目', rightName: pb?.name || '另一个项目',
           },
           items: items.slice(0, 500),

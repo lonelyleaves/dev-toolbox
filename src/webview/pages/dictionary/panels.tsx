@@ -654,8 +654,8 @@ export function CrossProjectDiffPanel(p: {
       {s && (
         <>
           <div class="row" style="margin:6px 0">
-            <span class="badge added">仅当前项目有 {s.added}</span>
-            <span class="badge deleted">仅对方项目有 {s.removed}</span>
+            <span class="badge added">仅当前项目有 {s.onlyCurrent ?? s.removed}</span>
+            <span class="badge deleted">仅对方项目有 {s.onlyOther ?? s.added}</span>
             <span class="badge modified">有差异 {s.modified}</span>
             <span class="badge">合计 {s.total}</span>
           </div>
