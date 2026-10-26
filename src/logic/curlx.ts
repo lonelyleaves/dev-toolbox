@@ -1,3 +1,5 @@
+import { normalizeInput } from './text';
+
 export interface ParsedCurl {
   method: string;
   url: string;
@@ -10,13 +12,29 @@ export interface ParsedCurl {
   errors: string[];
 }
 
+/**
+ * 预处理粘贴来的 cURL 命令。
+ * 常见来源：浏览器 DevTools（bash / cmd / PowerShell 三种复制格式）、文档里的折行。
+ * - bash：行尾 `\` 续行
+ * - PowerShell：行尾反引号续行
+ * - cmd.exe：行尾 `^` 续行，且用 `^"` 转义双引号
+ */
+export function prepareCurlCommand(cmd: string): string {
+  let s = normalizeInput(cmd).trim();
+  // cmd.exe 的转义引号先还原，否则分词器会把 ^" 当成普通字符
+  s = s.replace(/\^"/g, '"');
+  // 三种续行符都归一化成空格
+  s = s.replace(/[\\`^][ \t]*\n[ \t]*/g, ' ');
+  return s;
+}
+
 /** shell 风格分词（支持单双引号、转义、续行符） */
 export function tokenizeShell(cmd: string): string[] {
   const tokens: string[] = [];
   let cur = '';
   let quote: '"' | "'" | null = null;
   let has = false;
-  const s = cmd.replace(/\\\r?\n/g, ' ');
+  const s = prepareCurlCommand(cmd).replace(/\\\n/g, ' ');
   for (let i = 0; i < s.length; i++) {
     const ch = s[i];
     if (quote) {

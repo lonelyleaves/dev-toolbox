@@ -57,8 +57,10 @@ export function globalKingdeeDefaults(): KingdeeConnectionConfig {
     appId: c.appId || undefined,
     user: c.user || undefined,
     lcid: c.lcid,
-    loginPath: c.loginPath || undefined,
-    metadataPath: c.metadataPath || undefined,
+    // 只带用户显式配置的路径：默认路径由运行时回落，写进来会改变指纹，
+    // 导致"什么都没改却被判定为连接已变更"
+    loginPath: c.loginPath && c.loginPath !== DEFAULT_LOGIN_PATH ? c.loginPath : undefined,
+    metadataPath: c.metadataPath && c.metadataPath !== DEFAULT_METADATA_PATH ? c.metadataPath : undefined,
     argStyle: c.argStyle,
     extraHeaders: c.extraHeaders && Object.keys(c.extraHeaders).length ? JSON.stringify(c.extraHeaders) : undefined,
   };

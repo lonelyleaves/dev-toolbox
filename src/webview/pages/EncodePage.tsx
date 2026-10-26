@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'preact/hooks';
-import { CopyBtn, Section, Btn, usePersistentState, clipPrefill } from '../components';
+import { CopyBtn, Section, Btn, CodeArea, usePersistentState, clipPrefill } from '../components';
 import { ENCODE_MODES, EncodeMode, encode, decode } from '../../logic/encodex';
 import { Prefill } from '../app';
 
@@ -50,12 +50,11 @@ export function EncodePage({ prefill }: { prefill?: Prefill }) {
       </div>
 
       <Section title="输入">
-        <textarea
-          class="code grow"
-          rows={6}
+        <CodeArea
           value={input}
-          onInput={(e) => setInput(e.currentTarget.value)}
-          placeholder={mode === 'jwt' ? '粘贴 JWT Token…' : '输入要转换的文本…'}
+          onInput={setInput}
+          rows={6}
+          placeholder={mode === 'jwt' ? '粘贴 JWT Token（可带 Bearer 前缀）…' : '输入要转换的文本…'}
         />
       </Section>
 

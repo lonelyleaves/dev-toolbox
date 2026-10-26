@@ -4,7 +4,7 @@ import {
   parseJsonLoose, toYaml, toXml, toCsv, csvToJson, generateTypes, jsonPath,
 } from '../../logic/jsonx';
 import { buildDiffPairs } from '../../logic/diffx';
-import { CopyBtn, Section, Btn, useHistory, usePersistentState, clipPrefill } from '../components';
+import { CopyBtn, Section, Btn, CodeArea, useHistory, usePersistentState, clipPrefill } from '../components';
 import { Prefill } from '../app';
 
 type Tab = 'format' | 'convert' | 'codegen' | 'path' | 'tree' | 'diff';
@@ -33,6 +33,13 @@ export function JsonPage({ prefill }: { prefill?: Prefill }) {
   const parsed = useMemo(() => parseJsonLoose(debouncedInput), [debouncedInput]);
 
   useEffect(() => {
+    // 空输入不算错误（之前会一直显示 "Unexpected end of JSON input"）
+    if (!debouncedInput.trim()) {
+      setError('');
+      setOutput('');
+      setRepaired(false);
+      return;
+    }
     if (!parsed.ok) {
       setError(parsed.error || 'JSON 无效');
       setOutput('');
@@ -80,9 +87,16 @@ export function JsonPage({ prefill }: { prefill?: Prefill }) {
 
   return (
     <div>
-      <textarea class="code" value={input} onInput={(e) => setInput((e.target as HTMLTextAreaElement).value)} placeholder="粘贴 JSON（支持自动修复：注释/单引号/尾逗号/裸 key）" />
+      <CodeArea
+        value={input}
+        onInput={setInput}
+        minHeight={180}
+        placeholder="粘贴 JSON（支持自动修复：注释/单引号/尾逗号/裸 key）"
+      />
       <div class="toolbar">
-        {error ? <span class="badge err">✗ {error}</span> : <span class="badge ok">✓ JSON 合法{repaired ? '（已自动修复）' : ''}</span>}
+        {!input.trim() ? <span class="badge">等待输入</span>
+          : error ? <span class="badge err">✗ {error}</span>
+            : <span class="badge ok">✓ JSON 合法{repaired ? '（已自动修复）' : ''}</span>}
         {history.items.length > 0 && (
           <select onChange={(e) => setInput(history.items[Number((e.target as HTMLSelectElement).value)])} value="">
             <option value="" disabled>最近使用…</option>
@@ -155,7 +169,7 @@ export function JsonPage({ prefill }: { prefill?: Prefill }) {
 
       {tab === 'diff' && (
         <div>
-          <textarea class="code" style="min-height:90px" value={diffB} onInput={(e) => setDiffB((e.target as HTMLTextAreaElement).value)} placeholder="粘贴第二份 JSON 进行结构对比" />
+          <CodeArea class="grow" value={diffB} onInput={setDiffB} minHeight={90} placeholder="粘贴第二份 JSON 进行结构对比" />
           {diffOut && 'error' in (diffOut as any) && <div class="error-text">{(diffOut as any).error}</div>}
           {diffOut && 'pairs' in (diffOut as any) && (
             <div>

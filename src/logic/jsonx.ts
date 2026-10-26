@@ -1,4 +1,5 @@
 import yaml from 'js-yaml';
+import { normalizeInput } from './text';
 
 /** 修复常见非法 JSON：注释、单引号、尾逗号、未加引号的 key、NaN/undefined */
 export function repairJson(text: string): string {
@@ -58,11 +59,13 @@ export interface JsonParseResult {
 }
 
 export function parseJsonLoose(text: string): JsonParseResult {
+  // BOM（\uFEFF）会让 JSON.parse 直接报 "Unexpected token"，复制粘贴场景很常见
+  const source = normalizeInput(text).replace(/^\s+|\s+$/g, '');
   try {
-    return { ok: true, data: JSON.parse(text) };
+    return { ok: true, data: JSON.parse(source) };
   } catch (e: any) {
     try {
-      const fixed = repairJson(text);
+      const fixed = repairJson(source);
       const data = JSON.parse(fixed);
       return { ok: true, data, repaired: true };
     } catch (e2: any) {

@@ -1,6 +1,8 @@
 import { h, ComponentChildren, JSX } from 'preact';
 import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
 import { host } from './bridge';
+import { normalizeInput } from '../logic/text';
+import { buildGutterText, countWrappedRows } from '../logic/wrap';
 
 /** 复制按钮：调用宿主剪贴板 */
 export function CopyBtn({ text, label }: { text: () => string; label?: string }) {
@@ -71,8 +73,130 @@ export const PREFILL_MAX_CHARS = 20000;
 
 /** 统一截断策略：所有工具页共用，超长时尾部追加省略标记 */
 export function clipPrefill(text: string, max = PREFILL_MAX_CHARS): string {
-  if (!text || text.length <= max) return text;
-  return text.slice(0, max) + `\n…（已截断，原文 ${text.length} 字符，上限 ${max}）`;
+  // 右键/标签页送入的内容同样可能带 BOM、CRLF，先归一化
+  const t = normalizeInput(text);
+  if (!t || t.length <= max) return t;
+  return t.slice(0, max) + `\n…（已截断，原文 ${t.length} 字符，上限 ${max}）`;
+}
+
+/**
+ * 带行号的代码输入框。
+ * - 支持软换行：超宽内容在框内折行，不再横向滚动
+ * - 行号按"视觉行"对齐：逻辑行折行后只在首行显示编号，续行留空
+ * - 左侧行号栏与文本区共用字体/行高，滚动时同步
+ * - 粘贴时自动归一化（去 BOM、CRLF → LF、去零宽字符），避免"复制内容带换行符解析失败"
+ */
+export function CodeArea(p: {
+  value: string;
+  onInput: (v: string) => void;
+  placeholder?: string;
+  /** 最小高度（px），默认沿用 .code 的 140px */
+  minHeight?: number;
+  rows?: number;
+  /** 关闭行号栏（内容很短的场景） */
+  gutter?: boolean;
+  class?: string;
+  style?: string;
+}) {
+  const gutterRef = useRef<HTMLDivElement>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const logicalLines = Math.max((p.value || '').split('\n').length, 1);
+  const [rowCounts, setRowCounts] = useState<number[]>(() => new Array(logicalLines).fill(1));
+
+  /**
+   * 按当前可用宽度计算每个逻辑行折成了几个视觉行。
+   * 用 canvas 量出等宽字体下 '0' 与 '中' 的步进宽度，再按字符贪心折行，
+   * 与 textarea 的 break-all 折行规则保持一致。
+   */
+  const measure = useCallback(() => {
+    const el = taRef.current;
+    if (!el) return;
+    const cs = getComputedStyle(el);
+    const width = el.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+    // 还没布局（宽度为 0 / 面板隐藏）时不做字符测量，全部按 1 行占位，等 ResizeObserver 再算
+    if (!(width > 0)) {
+      const fallback = new Array(Math.max((p.value || '').split('\n').length, 1)).fill(1);
+      setRowCounts((prev) => (prev.length === fallback.length ? prev : fallback));
+      return;
+    }
+    const ctx = (canvasRef.current ?? (canvasRef.current = document.createElement('canvas'))).getContext('2d');
+    let ch = 0;
+    let wide = 0;
+    if (ctx) {
+      ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      ch = ctx.measureText('0').width;
+      wide = ctx.measureText('中').width;
+    }
+    if (!ch) ch = (parseFloat(cs.fontSize) || 13) * 0.6;
+    if (!wide) wide = ch * 2;
+    const next = countWrappedRows(p.value || '', width, ch, wide, 4);
+    // 折行结果没变就不触发重绘
+    setRowCounts((prev) => (prev.length === next.length && prev.every((v, i) => v === next[i]) ? prev : next));
+  }, [p.value]);
+
+  useEffect(() => { measure(); }, [measure]);
+
+  useEffect(() => {
+    const el = taRef.current;
+    let alive = true;
+    const ro = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(() => { if (alive) measure(); })
+      : null;
+    if (el && ro) ro.observe(el);
+    // 编辑器字体可能异步加载，加载后重新量一次字符宽度
+    document.fonts?.ready.then(() => { if (alive) measure(); }).catch(() => {});
+    return () => { alive = false; ro?.disconnect(); };
+  }, [measure]);
+
+  const lineText = rowCounts.length === logicalLines
+    ? buildGutterText(rowCounts)
+    : Array.from({ length: logicalLines }, (_, i) => String(i + 1)).join('\n');
+
+  const syncScroll = (e: JSX.TargetedEvent<HTMLTextAreaElement>) => {
+    const g = gutterRef.current;
+    if (g) g.scrollTop = (e.currentTarget as HTMLTextAreaElement).scrollTop;
+  };
+
+  const onPaste = (e: JSX.TargetedClipboardEvent<HTMLTextAreaElement>) => {
+    const raw = e.clipboardData?.getData('text/plain');
+    if (raw == null) return;
+    const text = normalizeInput(raw);
+    // 内容本身没问题就交给浏览器默认处理（保留撤销栈）
+    if (text === raw) return;
+    e.preventDefault();
+    const el = e.currentTarget as HTMLTextAreaElement;
+    const start = el.selectionStart ?? p.value.length;
+    const end = el.selectionEnd ?? start;
+    p.onInput(p.value.slice(0, start) + text + p.value.slice(end));
+    requestAnimationFrame(() => {
+      el.selectionStart = el.selectionEnd = start + text.length;
+    });
+  };
+
+  return (
+    <div
+      class="code-wrap"
+      style={p.minHeight ? `--dt-code-min-h:${p.minHeight}px` : undefined}
+      onClick={(e) => { if (e.target === e.currentTarget) taRef.current?.focus(); }}
+    >
+      {p.gutter !== false && (
+        <div class="code-gutter" ref={gutterRef} aria-hidden="true">{lineText}</div>
+      )}
+      <textarea
+        ref={taRef}
+        class={`code${p.class ? ` ${p.class}` : ''}`}
+        style={p.style}
+        rows={p.rows}
+        value={p.value}
+        placeholder={p.placeholder}
+        spellcheck={false}
+        onInput={(e) => p.onInput((e.target as HTMLTextAreaElement).value)}
+        onPaste={onPaste}
+        onScroll={syncScroll}
+      />
+    </div>
+  );
 }
 
 /**

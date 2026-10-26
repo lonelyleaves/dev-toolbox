@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'preact/hooks';
-import { CopyBtn, Section, Btn, usePersistentState, clipPrefill } from '../components';
+import { CopyBtn, Section, Btn, CodeArea, usePersistentState, clipPrefill } from '../components';
 import {
   hexToRgb, rgbToHex, rgbToHsl, hslToRgb, parseColor, rgbToCssString,
   contrastRatio, wcagRating, RgbColor, HslColor,
@@ -128,7 +128,7 @@ function HashPanel() {
         </Btn>
       </div>
       <Section title="输入">
-        <textarea class="code grow" rows={4} value={input} onInput={(e) => setInput(e.currentTarget.value)} placeholder="输入要计算哈希的文本…" />
+        <CodeArea value={input} onInput={setInput} rows={4} placeholder="输入要计算哈希的文本…" />
       </Section>
       <Section title="输出">
         <div style="display:flex;gap:8px;margin-bottom:6px">

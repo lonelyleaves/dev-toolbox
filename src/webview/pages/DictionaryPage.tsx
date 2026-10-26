@@ -29,7 +29,6 @@ function mkSource(kind: SourceKind, name: string, path?: string, tableCount = 0)
   };
 }
 
-/** 浏览树单次最多渲染的表数（大字典性能保护） */
 /** ER 图最多渲染的表数（每表含列文本，过多会卡） */
 const ER_RENDER_CAP = 60;
 
@@ -77,6 +76,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
   const [dict, setDict] = useState<DictionaryModel | null>(null);
   const [tab, setTab] = useState<Tab>('browse');
   const [selected, setSelected] = useState('');
+  const [kwInput, setKwInput] = useState('');
   const [keyword, setKeyword] = useState('');
   const [naming, setNaming] = useState<NamingRules>({ requireComment: true, requirePrimaryKey: true, forbiddenTypes: ['TEXT', 'BLOB'] });
   const [dbSnap, setDbSnap] = useState<DictionaryModel | null>(null);
@@ -84,6 +84,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [projectConfig, setProjectConfig] = useState<ProjectConfig>(emptyProjectConfig());
   const [secretKeys, setSecretKeys] = useState<string[]>([]);
+  const [dbSecretKeys, setDbSecretKeys] = useState<string[]>([]);
   const [configDefaults, setConfigDefaults] = useState<any>({});
   const [cacheMeta, setCacheMeta] = useState<any>({});
   const [configHash, setConfigHash] = useState<any>({});
@@ -94,11 +95,24 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
     resolutions: Record<string, 'base' | 'incoming'>;
     stats: MergeStats;
     sourceName: string;
+    /** 本次合并来自「同步」时，记录要回写缓存的来源类型/结果/指纹 */
+    sync?: { kind: 'db' | 'kingdee'; dict: DictionaryModel; meta?: any };
   } | null>(null);
 
+
+  // 搜索防抖：每次按键都全量扫描「表 × 字段」，1 万张表会明显卡顿，
+  // 所以输入框只改 kwInput，200ms 后才同步到真正参与过滤的 keyword
+  useEffect(() => {
+    const t = setTimeout(() => setKeyword(kwInput), 200);
+    return () => clearTimeout(t);
+  }, [kwInput]);
   /** 载入（或迁移出）当前项目的字典 */
   const loadProject = async (id: string | null, list?: ProjectMeta[]) => {
-    if (!id) { setDict(null); setProjectConfig(emptyProjectConfig()); setSecretKeys([]); setCacheMeta({}); return; }
+    // 切项目前先清空上一个项目的运行时状态：在线库快照、未确认的冲突、连接配置与凭据摘要
+    setDbSnap(null);
+    setPending(null);
+    setConfigHash({});
+    if (!id) { setDict(null); setProjectConfig(emptyProjectConfig()); setSecretKeys([]); setDbSecretKeys([]); setCacheMeta({}); return; }
     // 连接配置跟着项目走：切换项目时一起换掉（凭据按项目隔离，这里只拿到"有哪些凭据"）
     try {
       const r = await host.projectGetConfig(id);
@@ -107,6 +121,8 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
       setConfigHash(r?.hash ?? {});
     } catch { setProjectConfig(emptyProjectConfig()); }
     try { setSecretKeys(await host.projectReadSecretExists(id, 'kingdee')); } catch { setSecretKeys([]); }
+    // 数据库凭据与金蝶凭据分开查，否则"密码已保存"永远显示未保存
+    try { setDbSecretKeys(await host.projectReadSecretExists(id, 'db')); } catch { setDbSecretKeys([]); }
     try { setCacheMeta(await host.projectCacheMeta(id)); } catch { /* 忽略 */ }
     const d = await host.projectLoad(id);
     if (d && Array.isArray(d.tables) && d.tables.length > 0) {
@@ -162,7 +178,15 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
   useEffect(() => {
     if (!dict) return;
     const timer = setTimeout(() => {
-      if (currentId) host.projectSave(currentId, dict).catch(() => host.persistState('dict:last', dict).catch(() => undefined));
+      // 写盘失败必须让用户知道：静默退回 workspaceState 会导致换工作区就丢数据
+      if (currentId) {
+        host
+          .projectSave(currentId, dict)
+          .catch((e: any) => {
+            host.showMessage('error', `字典保存到项目失败：${e?.message || e}\n已临时存入工作区状态，建议立即「导出项目包」备份`).catch(() => undefined);
+            host.persistState('dict:last', dict).catch(() => undefined);
+          });
+      }
       else host.persistState('dict:last', dict).catch(() => undefined);
     }, 500);
     return () => clearTimeout(timer);
@@ -184,21 +208,21 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
   const applyImport = (
     d: DictionaryModel,
     source: DictSource,
-    opts?: { projectId?: string | null; base?: DictionaryModel | null },
-  ) => {
+    opts?: { projectId?: string | null; base?: DictionaryModel | null; sync?: { kind: 'db' | 'kingdee'; dict: DictionaryModel; meta?: any } },
+  ): boolean => {
     const id = opts?.projectId !== undefined ? opts.projectId : currentId;
     const base = opts?.base !== undefined ? opts.base : dict;
     if (!id) {
       // 没有项目时先建一个，避免数据无处可存
       host.projectCreate(d.name || source.name || '默认项目').then(async (p) => {
         await refreshProjects(p.id);
-        applyImport(d, source, { projectId: p.id, base });
+        applyImport(d, source, { projectId: p.id, base, sync: opts?.sync });
       }).catch(() => undefined);
-      return;
+      return false;
     }
     if (d.tables.length === 0) {
       host.showMessage('error', `导入失败：未解析到任何表。${d.importErrors[0]?.message || '文件格式可能不受支持'}`).catch(() => undefined);
-      return;
+      return false;
     }
     d.meta = { ...d.meta, importedAt: new Date().toISOString(), parser: PARSER_VERSION, source: source.name, sourcePath: source.path };
     if (!base || base.tables.length === 0) {
@@ -208,7 +232,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
       setTab('browse');
       host.projectSave(id, m).catch(() => undefined);
       host.showMessage('info', `导入完成：${m.tables.length} 张表`).catch(() => undefined);
-      return;
+      return false;
     }
     const r = mergeDictionaries(base, d, source);
     if (r.conflicts.length > 0) {
@@ -219,13 +243,14 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
         stats: r.stats,
         sourceName: source.name,
       });
-      return;
+      return true;
     }
     const m = migrateDict(r.dict);
     setDict(m);
     setTab('browse');
     host.projectSave(id, m).catch(() => undefined);
     host.showMessage('info', `合并完成：新增 ${r.stats.tablesAdded} 表 / ${r.stats.columnsAdded} 字段，共 ${m.tables.length} 张表`).catch(() => undefined);
+    return false;
   };
 
   /** 冲突面板点"应用"：按用户选择落地 */
@@ -236,6 +261,13 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
     setPending(null);
     setTab('browse');
     host.projectSave(currentId, finalDict).catch(() => undefined);
+    // 同步流程：只有确认合并成功才写缓存，取消则不写（否则缓存与字典会不一致）
+    if (pending.sync) {
+      host
+        .projectSaveCache(currentId, pending.sync.kind, pending.sync.dict, pending.sync.meta)
+        .then(async () => { try { setCacheMeta(await host.projectCacheMeta(currentId)); } catch { /* 忽略 */ } })
+        .catch(() => undefined);
+    }
     host.showMessage('info', `已应用 ${pending.conflicts.length} 项冲突决议`).catch(() => undefined);
   };
 
@@ -331,7 +363,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
       if (!r?.ok || !r.dict) { alert(`同步失败：${r?.error || '未知错误'}`); return; }
       const s = (dict?.sources || []).find((x) => x.id === id);
       const stripped = dict ? removeSource(dict, id).dict : null;
-      applyImport(r.dict, {
+      const deferred = applyImport(r.dict, {
         id,
         kind,
         name: s?.name || (kind === 'db' ? '在线库' : '金蝶元数据'),
@@ -339,7 +371,11 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
         enabled: true,
         importedAt: r.meta?.importedAt || new Date().toISOString(),
         tableCount: r.dict.tables.length,
-      }, { projectId: currentId, base: stripped });
+      }, { projectId: currentId, base: stripped, sync: { kind, dict: r.dict, meta: r.meta } });
+      // 无冲突时上面已直接落地，这里补写缓存；有冲突则交给冲突面板确认后再写
+      if (!deferred) {
+        await host.projectSaveCache(currentId, kind, r.dict, r.meta).catch(() => undefined);
+      }
       setCacheMeta(await host.projectCacheMeta(currentId));
     } catch (e: any) {
       alert(`同步失败：${e?.message || e}`);
@@ -356,6 +392,9 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
       if (secrets?.appSecret) kv.appSecret = secrets.appSecret;
       if (secrets?.password) kv.password = secrets.password;
       if (Object.keys(kv).length) await host.projectSaveSecret(currentId, 'kingdee', kv);
+      // 测试连接也会顺带保存凭据，刷新"已保存/未保存"标记
+      setSecretKeys(await host.projectReadSecretExists(currentId, 'kingdee'));
+      setDbSecretKeys(await host.projectReadSecretExists(currentId, 'db'));
       setProjectConfig(cfg);
       if (kind === 'db') {
         return await host.dbTestConnection({ ...(cfg.connections?.db || {}), password: secrets?.dbPassword || '', projectId: currentId } as any);
@@ -412,6 +451,37 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
   };
 
   // ---------- 渲染 ----------
+  // 连接配置面板：提取出来复用——空字典时（新建项目后）也要能进配置页
+  const configPane = (
+    <Section title="连接配置">
+      {currentId ? (
+        <ProjectConfigPanel
+          projectName={projects.find((x) => x.id === currentId)?.name || '当前项目'}
+          config={projectConfig}
+          savedSecretKeys={secretKeys}
+          savedDbKeys={dbSecretKeys}
+          defaults={configDefaults}
+          onTest={testConn}
+          onSave={async (cfg, secrets) => {
+            await host.projectSaveConfig(currentId, cfg);
+            if (secrets.dbPassword) await host.projectSaveSecret(currentId, 'db', { password: secrets.dbPassword });
+            const kv: Record<string, string> = {};
+            if (secrets.appSecret) kv.appSecret = secrets.appSecret;
+            if (secrets.password) kv.password = secrets.password;
+            if (Object.keys(kv).length) await host.projectSaveSecret(currentId, 'kingdee', kv);
+            setProjectConfig(cfg);
+            setSecretKeys(await host.projectReadSecretExists(currentId, 'kingdee'));
+            setDbSecretKeys(await host.projectReadSecretExists(currentId, 'db'));
+          }}
+        />
+      ) : (
+        <div class="small muted">
+          当前没有项目。请先在上方新建一个项目（或导入项目包），选中后再配置数据库连接与金蝶连接。
+        </div>
+      )}
+    </Section>
+  );
+
   if (!dict) {
     return (
       <div>
@@ -419,14 +489,15 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
           projects={projects}
           currentId={currentId}
           onSwitch={async (id) => { await host.projectSwitch(id); const nid = await refreshProjects(id); await loadProject(nid); }}
-          onCreate={async (name) => { await host.projectCreate(name); const id = await refreshProjects(); setDict(null); void id; }}
+          onCreate={async (name) => { await host.projectCreate(name); await loadProject(null); await refreshProjects(); }}
           onRename={async (name) => { if (currentId) { await host.projectRename(currentId, name); await refreshProjects(); } }}
-          onClear={async () => { if (currentId) { await host.projectClear(currentId); setDict(null); await refreshProjects(); } }}
+          onClear={async () => { if (currentId) { await host.projectClear(currentId); await loadProject(null); await refreshProjects(); } }}
           onDelete={async () => { if (currentId) { await host.projectDelete(currentId); const next = await refreshProjects(); await loadProject(next); } }}
           onExport={() => { if (currentId) host.projectExport(currentId, `${projects.find((p) => p.id === currentId)?.name || 'project'}.dtproj.json`).catch(() => undefined); }}
           onImport={async () => { await host.projectImport(); const id = await refreshProjects(); await loadProject(id); }}
           onConfig={() => setTab('config')}
         />
+        {tab === 'config' ? configPane : (
         <Section title="导入数据字典">
           <div class="toolbar">
             <Btn primary onClick={importPdm}>导入 PDM (PowerDesigner)</Btn>
@@ -440,6 +511,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
           </div>
           <DbImportForm onImported={(d) => finishImport(d, `${d.name || '数据库'}`, 'db')} />
         </Section>
+        )}
       </div>
     );
   }
@@ -456,7 +528,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
       return;
     }
     setSelected(target.name);
-    setKeyword('');
+    setKwInput('');
     setTab('browse');
   };
 
@@ -483,9 +555,9 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
         projects={projects}
         currentId={currentId}
         onSwitch={async (id) => { await host.projectSwitch(id); const nid = await refreshProjects(id); await loadProject(nid); }}
-        onCreate={async (name) => { const p = await host.projectCreate(name); await refreshProjects(p.id); setDict(null); }}
+        onCreate={async (name) => { const p = await host.projectCreate(name); await loadProject(null); await refreshProjects(p.id); }}
         onRename={async (name) => { if (currentId) { await host.projectRename(currentId, name); await refreshProjects(); } }}
-        onClear={async () => { if (currentId) { await host.projectClear(currentId); setDict(null); await refreshProjects(); } }}
+        onClear={async () => { if (currentId) { await host.projectClear(currentId); await loadProject(null); await refreshProjects(); } }}
         onDelete={async () => { if (currentId) { await host.projectDelete(currentId); const next = await refreshProjects(); await loadProject(next); } }}
         onExport={() => { if (currentId) host.projectExport(currentId, `${projects.find((p) => p.id === currentId)?.name || 'project'}.dtproj.json`).catch(() => undefined); }}
         onImport={async () => { await host.projectImport(); const id = await refreshProjects(); await loadProject(id); }}
@@ -528,7 +600,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
             selected={selected}
             onSelect={(name) => setSelected(name)}
             keyword={keyword}
-            onKeyword={(v) => setKeyword(v)}
+            onKeyword={(v) => setKwInput(v)}
           />
           <div class="right">
             {table && <TableDetail dict={dict} table={table} onJump={jumpTo} />}
@@ -558,25 +630,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
           hash={configHash}
         />
       )}
-      {tab === 'config' && currentId && (
-        <ProjectConfigPanel
-          projectName={projects.find((x) => x.id === currentId)?.name || '当前项目'}
-          config={projectConfig}
-          savedSecretKeys={secretKeys}
-          defaults={configDefaults}
-          onTest={testConn}
-          onSave={async (cfg, secrets) => {
-            await host.projectSaveConfig(currentId, cfg);
-            if (secrets.dbPassword) await host.projectSaveSecret(currentId, 'db', { password: secrets.dbPassword });
-            const kv: Record<string, string> = {};
-            if (secrets.appSecret) kv.appSecret = secrets.appSecret;
-            if (secrets.password) kv.password = secrets.password;
-            if (Object.keys(kv).length) await host.projectSaveSecret(currentId, 'kingdee', kv);
-            setProjectConfig(cfg);
-            setSecretKeys(await host.projectReadSecretExists(currentId, 'kingdee'));
-          }}
-        />
-      )}
+      {tab === 'config' && configPane}
       {tab === 'extend' && (
         <div>
           <Section title="数据库扩展字段">

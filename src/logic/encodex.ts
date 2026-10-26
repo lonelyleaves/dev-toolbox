@@ -1,5 +1,7 @@
 /** 编码转换工具集：Base64 / URL / Hex / Unicode / HTML 实体 / JWT 解码 */
 
+import { normalizeInput } from './text';
+
 // ─── Base64 ────────────────────────────────────────────
 export function toBase64(input: string): string {
   try {
@@ -96,7 +98,9 @@ export interface JwtPayload {
 }
 
 export function decodeJwt(token: string): JwtPayload {
-  const parts = token.trim().split('.');
+  // 复制出来的 Token 常带 "Bearer " 前缀，且被终端折行；先去掉空白再分段
+  const raw = normalizeInput(token).replace(/^\s*Bearer\s+/i, '').replace(/\s+/g, '');
+  const parts = raw.split('.');
   if (parts.length !== 3) throw new Error('JWT 必须包含 3 段（以 . 分隔）');
   const decode = (seg: string) => {
     const pad = seg.length % 4 === 0 ? '' : '='.repeat(4 - (seg.length % 4));

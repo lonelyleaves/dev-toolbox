@@ -71,7 +71,10 @@ export const host = {
     call<boolean>('projectSaveSecret', { projectId, kind, values }),
   projectSync: (projectId: string, kind: 'db' | 'kingdee', formIds?: string[]) =>
     call<{ ok: boolean; dict?: any; meta?: any; error?: string }>('projectSync', { projectId, kind, formIds }, 120000),
-  projectCacheMeta: (projectId: string) => call<Record<string, { importedAt?: string; stale?: boolean; tableCount?: number }>>('projectCacheMeta', { projectId }),
+  projectSaveCache: (projectId: string, kind: 'db' | 'kingdee', dict: any, meta?: any) =>
+    call<boolean>('projectSaveCache', { projectId, kind, dict, meta }),
+  projectCacheMeta: (projectId: string) =>
+    call<Record<string, { importedAt?: string; stale?: boolean; tableCount?: number; configHash?: string }>>('projectCacheMeta', { projectId }),
   kingdeeTestConfig: (projectId: string) => call<{ ok: boolean; message: string }>('kingdeeTestConfig', { projectId }, 60000),
   projectReadSecretExists: (projectId: string, kind: 'db' | 'kingdee') => call<string[]>('projectReadSecretExists', { projectId, kind }),
 

@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
 import { javaToJson } from '../../logic/javajson';
-import { Btn, CopyBtn, usePersistentState, clipPrefill } from '../components';
+import { Btn, CopyBtn, CodeArea, usePersistentState, clipPrefill } from '../components';
 import { Prefill } from '../app';
 
 const SAMPLE_SRC = `public class OrderDTO {
@@ -48,7 +48,7 @@ export function JavaToJsonPage({ prefill }: { prefill?: Prefill }) {
     <div>
       <div class="grid2">
         <div>
-          <textarea class="code" style="min-height:320px" value={src} onInput={(e) => setSrc((e.target as HTMLTextAreaElement).value)} placeholder="粘贴 Java 类源码（支持嵌套类/枚举/泛型/Jackson 注解）" />
+          <CodeArea value={src} onInput={setSrc} minHeight={320} placeholder="粘贴 Java 类源码（支持嵌套类/枚举/泛型/Jackson 注解）" />
           <div class="toolbar">
             <Btn primary onClick={run}>生成 JSON</Btn>
             <label class="small">展开深度</label>

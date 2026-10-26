@@ -144,7 +144,6 @@ export async function handleHostCommand(cmd: HostCommand, payload: any, panel: v
             kind: 'db', importedAt: new Date().toISOString(),
             configHash: configHashOf(cfg, 'db'), tableCount: d.tables.length,
           };
-          projects().saveCache(projectId, 'db', d, meta);
           return { ok: true, dict: d, meta };
         }
         const c = cfg.connections?.kingdee;
@@ -159,17 +158,33 @@ export async function handleHostCommand(cmd: HostCommand, payload: any, panel: v
           kind: 'kingdee', importedAt: new Date().toISOString(),
           configHash: configHashOf(cfg, 'kingdee'), formIds: ids, tableCount: d.tables.length,
         };
-        projects().saveCache(projectId, 'kingdee', d, meta);
         return { ok: true, dict: d, meta };
       } catch (e: any) {
         return { ok: false, error: String(e?.message || e) };
       }
     }
+    // 只有前端在冲突面板点过「应用」、确认合并成功后才调用，
+    // 否则用户点了取消，缓存却已经是新的 → 显示"刚刚拉取"但字典没变，状态不一致
+    case 'projectSaveCache': {
+      const { projectId, kind, dict, meta } = payload as {
+        projectId: string; kind: 'db' | 'kingdee'; dict: any; meta?: any;
+      };
+      projects().saveCache(projectId, kind, dict, {
+        kind,
+        importedAt: meta?.importedAt || new Date().toISOString(),
+        configHash: meta?.configHash ?? configHashOf(projects().loadConfig(projectId), kind),
+        formIds: meta?.formIds,
+        tableCount: meta?.tableCount ?? dict?.tables?.length,
+      });
+      return true;
+    }
     // 读取某类来源的上次拉取信息（时间 + 是否因改了连接而过期）
     case 'projectCacheMeta': {
       const { projectId } = payload as { projectId: string };
       const cfg = projects().loadConfig(projectId);
-      const out: Record<string, { importedAt?: string; stale?: boolean; tableCount?: number }> = {};
+      // 必须回传 configHash：前端靠它与当前配置指纹比对来判断「改了连接没」，
+      // 少了这个字段 staleNow 恒为 false，「连接已变更」提示永远不会亮
+      const out: Record<string, { importedAt?: string; stale?: boolean; tableCount?: number; configHash?: string }> = {};
       for (const kind of ['db', 'kingdee'] as const) {
         const c = projects().loadCache(projectId, kind);
         if (!c) continue;
@@ -177,6 +192,7 @@ export async function handleHostCommand(cmd: HostCommand, payload: any, panel: v
           importedAt: c.meta?.importedAt,
           tableCount: c.meta?.tableCount,
           stale: c.meta?.configHash !== configHashOf(cfg, kind),
+          configHash: c.meta?.configHash,
         };
       }
       return out;
@@ -234,7 +250,19 @@ export async function handleHostCommand(cmd: HostCommand, payload: any, panel: v
       const uris = await vscode.window.showOpenDialog({ canSelectMany: false, filters: { '项目包': ['json'] } });
       if (!uris || uris.length === 0) return null;
       const raw = await fs.promises.readFile(uris[0].fsPath, 'utf8');
-      return projects().importBundle(JSON.parse(raw));
+      let bundle: any;
+      try {
+        bundle = JSON.parse(raw);
+      } catch {
+        vscode.window.showErrorMessage('导入失败：文件不是有效的 JSON');
+        return null;
+      }
+      try {
+        return projects().importBundle(bundle);
+      } catch (e: any) {
+        vscode.window.showErrorMessage(`导入失败：${e?.message || e}`);
+        return null;
+      }
     }
     // ---------- 金蝶云星空 ----------
     case 'kingdeeFetchMetadata': {

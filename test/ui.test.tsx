@@ -214,6 +214,41 @@ describe('项目连接配置面板', () => {
   });
 });
 
+describe('代码输入框（行号 + 粘贴归一化）', () => {
+  it('按换行数渲染行号，滚动时行号栏同步', async () => {
+    const { CodeArea } = await import('../src/webview/components');
+    const { container, unmount } = await mount(h(CodeArea, { value: 'a\nb\nc', onInput: () => {} }));
+    const gutter = container.querySelector('.code-gutter') as HTMLElement;
+    expect(gutter).toBeTruthy();
+    expect(gutter.textContent).toBe('1\n2\n3');
+    const ta = container.querySelector('textarea') as HTMLTextAreaElement;
+    expect(ta.value).toBe('a\nb\nc');
+    await unmount();
+  });
+
+  it('粘贴带 BOM / CRLF 的内容会被归一化后再交给 onInput', async () => {
+    const { CodeArea } = await import('../src/webview/components');
+    let received = '';
+    const { container, unmount } = await mount(h(CodeArea, {
+      value: 'ab', onInput: (v: string) => { received = v; },
+    }));
+    const ta = container.querySelector('textarea') as HTMLTextAreaElement;
+    ta.setSelectionRange(2, 2);
+    const ev: any = new Event('paste', { bubbles: true, cancelable: true });
+    ev.clipboardData = { getData: () => '\uFEFFline1\r\nline2' };
+    await act(async () => { ta.dispatchEvent(ev); });
+    expect(received).toBe('abline1\nline2');
+    await unmount();
+  });
+
+  it('单行内容也至少显示一行行号', async () => {
+    const { CodeArea } = await import('../src/webview/components');
+    const { container, unmount } = await mount(h(CodeArea, { value: '', onInput: () => {} }));
+    expect((container.querySelector('.code-gutter') as HTMLElement).textContent).toBe('1');
+    await unmount();
+  });
+});
+
 describe('表列表：虚拟滚动与筛选', () => {
   const many = Array.from({ length: 1000 }, (_, i) => ({
     name: `T_TAB_${i}`, code: `表${i}`, comment: i % 3 === 0 ? `注释${i}` : '', origin: { sourceId: 's1', kind: i % 2 ? 'pdm' : 'db' },
@@ -255,6 +290,82 @@ describe('表列表：虚拟滚动与筛选', () => {
     expect(opts).toContain('缺主键');
     expect(opts).toContain('缺中文注释');
     expect(opts.some((t) => t?.includes('MFG.pdm'))).toBe(true);
+    await unmount();
+  });
+});
+
+describe('同步流程与连接状态指示', () => {
+  it('项目栏状态点：配了连接显示绿点，没配显示灰点', async () => {
+    const { ProjectBar } = await import('../src/webview/pages/dictionary/panels');
+    const projects = [
+      { id: 'p1', name: '有连接', createdAt: '', updatedAt: '', sourceCount: 1, tableCount: 10, configSummary: { db: true, kingdee: true } },
+      { id: 'p2', name: '无连接', createdAt: '', updatedAt: '', sourceCount: 0, tableCount: 0, configSummary: { db: false, kingdee: false } },
+    ];
+    const { container, unmount } = await mount(h(ProjectBar, {
+      projects, currentId: 'p1', onSwitch: () => {}, onCreate: () => {}, onRename: () => {},
+      onClear: () => {}, onDelete: () => {}, onExport: () => {}, onImport: () => {}, onConfig: () => {},
+    }));
+    const ok = container.querySelectorAll('.dot.ok');
+    const all = container.querySelectorAll('.dot');
+    expect(all.length).toBe(2); // DB + 金蝶 两个点
+    expect(ok.length).toBe(2);  // p1 两个都配了
+
+    // 切到没连接的项目
+    const { container: c2, unmount: u2 } = await mount(h(ProjectBar, {
+      projects, currentId: 'p2', onSwitch: () => {}, onCreate: () => {}, onRename: () => {},
+      onClear: () => {}, onDelete: () => {}, onExport: () => {}, onImport: () => {}, onConfig: () => {},
+    }));
+    expect(c2.querySelectorAll('.dot.ok').length).toBe(0);
+    await unmount();
+    await u2();
+  });
+
+  it('来源面板：db/金蝶来源显示「同步」，其它来源不显示', async () => {
+    const { SourcesPanel } = await import('../src/webview/pages/dictionary/panels');
+    const dict = {
+      version: 1, name: 'x', dialect: 'generic', tables: [], importErrors: [],
+      sources: [
+        { id: 's1', kind: 'db' as const, name: '在线库', importedAt: new Date().toISOString(), tableCount: 5, enabled: true, priority: 20 },
+        { id: 's2', kind: 'pdm' as const, name: 'MFG.pdm', path: '/tmp/a.pdm', importedAt: new Date().toISOString(), tableCount: 100, enabled: true, priority: 10 },
+      ],
+    };
+    const { container, unmount } = await mount(h(SourcesPanel, {
+      dict, onRemove: () => {}, onToggle: () => {}, onRefresh: () => {}, onSync: () => {}, onAdd: () => {},
+    }));
+    const links = [...container.querySelectorAll('a')].map((a) => (a.textContent || '').trim());
+    expect(links.filter((t) => t.startsWith('同步')).length).toBe(1); // 只有 db 那个
+    await unmount();
+  });
+
+  it('连接配置页：两个测试按钮都在，且结果显示在页面上', async () => {
+    const { ProjectConfigPanel } = await import('../src/webview/pages/dictionary/panels');
+    const cfg = { connections: { db: { client: 'mysql', host: 'h', port: 3306, user: 'u', database: 'd' }, kingdee: { baseUrl: 'http://k3' } } } as any;
+    const { container, unmount } = await mount(h(ProjectConfigPanel, {
+      projectName: 'A客户', config: cfg, savedSecretKeys: [], savedDbKeys: [],
+      onTest: async () => '配置可用：已登录并取得会话',
+      onSave: async () => {},
+    }));
+    const btns = [...container.querySelectorAll('button')].map((b) => b.textContent || '');
+    expect(btns.some((t) => t.includes('测试 SQL 连接'))).toBe(true);
+    expect(btns.some((t) => t.includes('测试 WebAPI 配置'))).toBe(true);
+
+    const sqlBtn = [...container.querySelectorAll('button')].find((b) => (b.textContent || '').includes('测试 SQL 连接'))!;
+    await act(async () => { sqlBtn.click(); });
+    await flush();
+    // 结果必须真的出现在页面上（之前 testMsg 只赋值不渲染 → 点了看不到任何反馈）
+    expect((container.textContent || '')).toContain('已登录并取得会话');
+    await unmount();
+  });
+
+  it('数据库连接已存过密码时，面板标注「已保存」', async () => {
+    const { ProjectConfigPanel } = await import('../src/webview/pages/dictionary/panels');
+    const cfg = { connections: { db: { client: 'mysql', host: 'h', port: 3306, user: 'u', database: 'd' }, kingdee: {} } } as any;
+    const { container, unmount } = await mount(h(ProjectConfigPanel, {
+      projectName: 'A客户', config: cfg,
+      savedSecretKeys: ['appSecret'], savedDbKeys: ['password'],
+      onTest: async () => '', onSave: async () => {},
+    }));
+    expect((container.textContent || '').includes('已保存')).toBe(true);
     await unmount();
   });
 });

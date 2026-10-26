@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
 import { format } from 'sql-formatter';
-import { Btn, CopyBtn, usePersistentState, clipPrefill } from '../components';
+import { Btn, CopyBtn, CodeArea, usePersistentState, clipPrefill } from '../components';
 import { host } from '../bridge';
 import { Prefill } from '../app';
 
@@ -24,6 +24,11 @@ export function SqlFormatPage({ prefill }: { prefill?: Prefill }) {
   }, [prefill]);
 
   const doFormat = () => {
+    if (!sql.trim()) {
+      setError('');
+      setOutput('');
+      return;
+    }
     try {
       setError('');
       setOutput(format(sql, {
@@ -37,13 +42,17 @@ export function SqlFormatPage({ prefill }: { prefill?: Prefill }) {
     }
   };
 
-  useEffect(() => { doFormat(); }, [dialect, keywordCase, indent]);
+  // 输入/方言变化后自动重排（防抖），打开页面即有结果；之前只有首次进来是空的
+  useEffect(() => {
+    const t = setTimeout(doFormat, 250);
+    return () => clearTimeout(t);
+  }, [sql, dialect, keywordCase, indent]);
 
   const stmtCount = sql.split(';').filter((s) => s.trim()).length;
 
   return (
     <div>
-      <textarea class="code" value={sql} onInput={(e) => setSql((e.target as HTMLTextAreaElement).value)} />
+      <CodeArea value={sql} onInput={setSql} placeholder="粘贴 SQL…" />
       <div class="toolbar">
         <select value={dialect} onInput={(e) => setDialect((e.target as HTMLSelectElement).value)}>
           {DIALECTS.map((d) => <option value={d}>{d}</option>)}

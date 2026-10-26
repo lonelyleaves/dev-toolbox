@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
 import { parseInserts, InsertTable, generateUpdates, generateDeletes, toCsv, toJsonArray, splitToSingleRowInserts } from '../../logic/sqlrestore';
-import { Btn, CopyBtn, Section, usePersistentState, clipPrefill } from '../components';
+import { Btn, CopyBtn, CodeArea, Section, usePersistentState, clipPrefill } from '../components';
 import { host } from '../bridge';
 import { Prefill } from '../app';
 
@@ -21,14 +21,18 @@ export function SqlRestorePage({ prefill }: { prefill?: Prefill }) {
   }, [prefill]);
 
   const run = () => setResult(parseInserts(sql));
-  useEffect(() => { run(); }, [sql]);
+  // 大 SQL 文件逐键解析会卡住 UI，改成防抖；手动"解析"按钮仍然立即执行
+  useEffect(() => {
+    const t = setTimeout(() => setResult(parseInserts(sql)), 300);
+    return () => clearTimeout(t);
+  }, [sql]);
 
   const table = result.tables[Math.min(activeIdx, Math.max(result.tables.length - 1, 0))];
   const pkCols = table ? pkInput.split(',').map((s) => s.trim()).filter((s) => table.columns.includes(s)) : [];
 
   return (
     <div>
-      <textarea class="code" style="min-height:120px" value={sql} onInput={(e) => setSql((e.target as HTMLTextAreaElement).value)} placeholder="粘贴 INSERT 语句（支持多行 VALUES、转义引号、NULL、函数值）" />
+      <CodeArea value={sql} onInput={setSql} minHeight={140} placeholder="粘贴 INSERT 语句（支持多行 VALUES、转义引号、NULL、函数值）" />
       <div class="toolbar">
         <Btn primary onClick={run}>解析</Btn>
         {result.errors.map((er) => <span class="badge warn" title={er}>{er.slice(0, 40)}</span>)}

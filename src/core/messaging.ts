@@ -90,6 +90,7 @@ export type HostCommand =
   | 'projectGetConfig'
   | 'projectSaveConfig'
   | 'projectSync'
+  | 'projectSaveCache'
   | 'projectCacheMeta'
   | 'kingdeeTestConfig'
   | 'projectSaveSecret'

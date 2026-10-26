@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useState, useEffect, useMemo } from 'preact/hooks';
 import { buildDiffPairs, DiffLinePair, changedBlocks } from '../../logic/diffx';
-import { CopyBtn, Section, Btn, usePersistentState, clipPrefill } from '../components';
+import { CopyBtn, CodeArea, Section, Btn, usePersistentState, clipPrefill } from '../components';
 import { host } from '../bridge';
 import { Prefill } from '../app';
 
@@ -47,8 +47,8 @@ export function DiffPage({ prefill }: { prefill?: Prefill }) {
   return (
     <div>
       <div class="grid2">
-        <textarea class="code" placeholder="左侧文本（基准）" value={left} onInput={(e) => setLeft((e.target as HTMLTextAreaElement).value)} />
-        <textarea class="code" placeholder="右侧文本（对比）" value={right} onInput={(e) => setRight((e.target as HTMLTextAreaElement).value)} />
+        <CodeArea value={left} onInput={setLeft} minHeight={180} placeholder="左侧文本（基准）" />
+        <CodeArea value={right} onInput={setRight} minHeight={180} placeholder="右侧文本（对比）" />
       </div>
       <div class="toolbar">
         <Btn onClick={async () => { const t = await host.getClipboard(); setRight(t); }}>剪贴板 → 右侧</Btn>

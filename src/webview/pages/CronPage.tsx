@@ -3,6 +3,7 @@ import { useState, useEffect, useMemo } from 'preact/hooks';
 import { analyzeCron, CRON_TEMPLATES, buildCron, CronResult } from '../../logic/cronx';
 import { COMMON_TIMEZONES } from '../../logic/timestamp';
 import { CopyBtn, Section, Btn, usePersistentState, clipPrefill } from '../components';
+import { toSingleLine } from '../../logic/text';
 import { Prefill } from '../app';
 
 export function CronPage({ prefill }: { prefill?: Prefill }) {
@@ -28,7 +29,7 @@ export function CronPage({ prefill }: { prefill?: Prefill }) {
     <div>
       <div class="row">
         <input type="text" class="mono grow" style="font-size:14px" placeholder="Cron 表达式（5 或 6 段）"
-          value={expr} onInput={(e) => setExpr((e.target as HTMLInputElement).value)} />
+          value={expr} onInput={(e) => setExpr(toSingleLine((e.target as HTMLInputElement).value))} />
         <select value={tz} onInput={(e) => setTz((e.target as HTMLSelectElement).value)}>
           {COMMON_TIMEZONES.map((z) => <option value={z}>{z}</option>)}
         </select>

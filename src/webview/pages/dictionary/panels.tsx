@@ -1,5 +1,5 @@
 import { h } from 'preact';
-import { useState } from 'preact/hooks';
+import { useState, useMemo } from 'preact/hooks';
 import { Btn, Section } from '../../components';
 import { ProjectMeta, ProjectConfig } from '../../../core/messaging';
 import { host } from '../../bridge';
@@ -97,7 +97,7 @@ export function SourcesPanel(p: {
   onRefresh: (id: string) => void;
   onAdd: () => void;
   onSync: (id: string, kind: 'db' | 'kingdee') => void;
-  cacheMeta?: Record<string, { importedAt?: string; configHash?: string }>;
+  cacheMeta?: Record<string, { importedAt?: string; stale?: boolean; tableCount?: number; configHash?: string }>;
   hash?: { db?: string; kingdee?: string };
 }) {
   const sources = p.dict.sources || [];
@@ -105,8 +105,12 @@ export function SourcesPanel(p: {
   /** 判断该来源的缓存是否已过期（连接配置指纹变了） */
   const staleNow = (id: string, kind: string) => {
     const m = (p.cacheMeta || {})[kind];
+    if (!m) return false;
+    // 宿主已算好 stale 就以它为准（它同时握着缓存指纹与当前指纹，最准）；
+    // 拿不到时再退回前端自己比对，避免字段缺失导致提示永远不亮
+    if (typeof m.stale === 'boolean') return m.stale;
     const now = (p.hash || {})[kind as 'db' | 'kingdee'];
-    return !!m?.configHash && !!now && m.configHash !== now;
+    return !!m.configHash && !!now && m.configHash !== now;
   };
   if (sources.length === 0) {
     return <Section title="来源"><div class="muted small">暂无来源，点击下方按钮导入 PDM / DDL / Markdown / Excel / 数据库 / 金蝶元数据</div></Section>;
@@ -307,6 +311,8 @@ export function ProjectConfigPanel(p: {
   projectName: string;
   config: import('../../../core/messaging').ProjectConfig;
   savedSecretKeys: string[];
+  /** 数据库凭据已保存的键名（与金蝶分开查，否则 db 那一栏永远显示"未保存"） */
+  savedDbKeys?: string[];
   /** 测试连接：返回可直接展示的结果文案 */
   onTest: (kind: 'db' | 'kingdee', cfg: ProjectConfig, secrets: any) => Promise<string>;
   /** 全局 devToolbox.* 设置的值，仅用于"填充"按钮，运行时不参与取连接 */
@@ -321,23 +327,43 @@ export function ProjectConfigPanel(p: {
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const hasDbSecret = p.savedSecretKeys.includes('password');
+  const hasDbSecret = (p.savedDbKeys ?? []).includes('password');
   const hasAppSecret = p.savedSecretKeys.includes('appSecret');
 
   const [testMsg, setTestMsg] = useState('');
+  const [testOk, setTestOk] = useState<boolean | null>(null);
   const [testing, setTesting] = useState<'db' | 'kingdee' | ''>('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const runTest = async (kind: 'db' | 'kingdee') => {
-    setTesting(kind); setTestMsg('');
+    setTesting(kind); setTestMsg(kind === 'db' ? '正在连接数据库…' : '正在登录金蝶并校验接口…'); setTestOk(null);
     try {
-      const msg = await p.onTest(kind, { connections: { db, kingdee: kd } }, { dbPassword: dbPwd || undefined, appSecret: appSecret || undefined, password: pwd || undefined });
-      setTestMsg((kind === 'db' ? '[SQL] ' : '[金蝶] ') + msg);
+      const out = await p.onTest(kind, { connections: { db, kingdee: kd } }, { dbPassword: dbPwd || undefined, appSecret: appSecret || undefined, password: pwd || undefined });
+      setTestOk(!/^✗/.test(out));
+      setTestMsg((kind === 'db' ? '[SQL] ' : '[金蝶] ') + out);
     } catch (e: any) {
+      setTestOk(false);
       setTestMsg(`✗ ${e?.message || e}`);
     }
     setTesting('');
   };
 
+  /** 切换数据库类型时自动带默认端口（避免选了 SQL Server 还留着 3306） */
+  const DEFAULT_PORTS: Record<string, number> = { mysql: 3306, postgres: 5432, mssql: 1433, oracle: 1521 };
+  const onClientChange = (v: string) => {
+    const prev = DEFAULT_PORTS[db.client];
+    const cur = Number(db.port);
+    const next = { ...db, client: v };
+    // 只在"没填端口"或"端口还是上一个类型的默认值"时才覆盖，手工改过的端口不动
+    if (!cur || (prev && cur === prev)) next.port = DEFAULT_PORTS[v];
+    setDb(next);
+  };
+
+  const restoreDefaultPaths = () => {
+    setKd({ ...kd, loginPath: '', metadataPath: '' });
+    setTestMsg('已清空登录/元数据路径，保存后将使用官方默认接口');
+    setTestOk(true);
+  };
   const set = (obj: any, k: string, v: any) => ({ ...obj, [k]: v });
 
   /** 把旧版全局设置一次性带进本项目（严格模式下运行时仍只读项目配置） */
@@ -376,14 +402,14 @@ export function ProjectConfigPanel(p: {
 
         <div style="font-weight:600; margin:10px 0 6px">数据库连接</div>
         <Field label="类型">
-          <select value={db.client ?? ''} onInput={(e: any) => setDb(set(db, 'client', e.target.value))}>
+          <select value={db.client ?? ''} onInput={(e: any) => onClientChange(e.target.value)}>
             <option value="">（未选择）</option>
             {Object.entries(DB_LABEL).map(([k, v]) => <option value={k}>{v}</option>)}
           </select>
         </Field>
         <Field label="主机 / 端口">
           <input type="text" style="width:150px" placeholder="127.0.0.1" value={db.host ?? ''} onInput={(e: any) => setDb(set(db, 'host', e.target.value))} />
-          <input type="number" style="width:80px" placeholder="3306" value={db.port ?? ''} onInput={(e: any) => setDb(set(db, 'port', e.target.value))} />
+          <input type="number" style="width:80px" placeholder={String(DEFAULT_PORTS[db.client] ?? 3306)} value={db.port ?? ''} onInput={(e: any) => setDb(set(db, 'port', e.target.value))} />
         </Field>
         <Field label="用户名 / 库名">
           <input type="text" style="width:120px" placeholder="user" value={db.user ?? ''} onInput={(e: any) => setDb(set(db, 'user', e.target.value))} />
@@ -418,6 +444,25 @@ export function ProjectConfigPanel(p: {
           </select>
         </Field>
 
+        <div style="margin-top:8px">
+          <a class="link small" href="#" onClick={(e) => { e.preventDefault(); setShowAdvanced(!showAdvanced); }}>
+            {showAdvanced ? '收起高级参数 ▴' : '高级参数（接口路径 / 附加请求头）▾'}
+          </a>
+        </div>
+        {showAdvanced && (
+          <div class="col" style="margin-top:6px; padding-left:4px; border-left:2px solid var(--vscode-panel-border)">
+            <Field label="登录接口路径" hint="留空用官方 AuthService.ValidateUser">
+              <input type="text" style="width:100%" placeholder="Kingdee.BOS.WebApi.ServicesStub.AuthService.ValidateUser.common.kdsvc" value={kd.loginPath ?? ''} onInput={(e: any) => setKd(set(kd, 'loginPath', e.target.value))} />
+            </Field>
+            <Field label="元数据接口路径" hint="留空用官方 QueryBusinessInfo">
+              <input type="text" style="width:100%" placeholder="Kingdee.BOS.WebApi.ServicesStub.DynamicFormService.QueryBusinessInfo.common.kdsvc" value={kd.metadataPath ?? ''} onInput={(e: any) => setKd(set(kd, 'metadataPath', e.target.value))} />
+            </Field>
+            <Field label="附加请求头" hint='JSON，如 {"Key":"xxx"}'>
+              <input type="text" style="width:100%" placeholder='{"Key":"xxx"}' value={kd.extraHeaders ?? ''} onInput={(e: any) => setKd(set(kd, 'extraHeaders', e.target.value))} />
+            </Field>
+            <Btn onClick={restoreDefaultPaths}>恢复默认接口路径</Btn>
+          </div>
+        )}
         <div class="row" style="margin-top:10px">
           <Btn primary onClick={save} disabled={busy}>{busy ? '保存中…' : '保存到此项目'}</Btn>
           <Btn onClick={fillFromGlobal} title="把旧版 devToolbox.kingdee.* 全局设置带进当前项目">从全局设置填充</Btn>
@@ -429,6 +474,16 @@ export function ProjectConfigPanel(p: {
           </Btn>
           {msg && <span class="small mono">{msg}</span>}
         </div>
+        {testMsg && (
+          <div
+            class="small mono"
+            style={`margin-top:8px; padding:6px 8px; border-radius:4px; white-space:pre-wrap; word-break:break-all;
+              background:var(--vscode-textBlockQuote-background);
+              border-left:3px solid ${testOk === false ? 'var(--vscode-errorForeground, #c00)' : 'var(--vscode-testing-iconPassed, #2ea043)'}`}
+          >
+            {testMsg}
+          </div>
+        )}
       </Section>
     </div>
   );
@@ -484,7 +539,7 @@ export function TableList(p: {
   const kw = (p.keyword || '').trim().toLowerCase();
 
   // 关键字优先：命中列的表排在前面，仍然是"表"级别的结果（不展开字段）
-  const hits = kw
+  const hits = useMemo(() => (kw
     ? p.tables
         .map((t) => {
           const inTable = (t.name || '').toLowerCase().includes(kw) || (t.code || '').toLowerCase().includes(kw) || (t.comment || '').toLowerCase().includes(kw);
@@ -493,17 +548,21 @@ export function TableList(p: {
           return { t, col };
         })
         .filter(Boolean) as { t: any; col?: any }[]
-    : [];
+    : []), [p.tables, kw]);
 
-  const list = kw ? hits.map((h) => h.t) : p.tables.filter((t) => matchFilter(t, filter));
-  const capped = kw ? list.slice(0, p.maxHits ?? 200) : list;
+  const list = useMemo(
+    () => (kw ? hits.map((h) => h.t) : p.tables.filter((t) => matchFilter(t, filter))),
+    [kw, hits, p.tables, filter],
+  );
+
+  const capped = useMemo(() => (kw ? list.slice(0, p.maxHits ?? 200) : list), [kw, list, p.maxHits]);
   const total = kw ? list.length : capped.length;
 
   const start = Math.max(0, Math.floor(scrollTop / ROW_H) - 4);
   const end = Math.min(capped.length, Math.ceil((scrollTop + viewH) / ROW_H) + 4);
   const slice = capped.slice(start, end);
 
-  const kinds = [...new Set(p.tables.map((t) => t.origin?.kind || 'unknown'))];
+  const kinds = useMemo(() => [...new Set(p.tables.map((t) => t.origin?.kind || 'unknown'))], [p.tables]);
 
   return (
     <div class="left" style="display:flex; flex-direction:column; min-height:0; overflow:hidden">

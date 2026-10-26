@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
 import QRCode from 'qrcode';
 import jsQR from 'jsqr';
-import { Btn, CopyBtn, Section, usePersistentState, clipPrefill } from '../components';
+import { Btn, CopyBtn, CodeArea, Section, usePersistentState, clipPrefill } from '../components';
 import { host } from '../bridge';
 import { Prefill } from '../app';
 
@@ -70,11 +70,17 @@ export function QrcodePage({ prefill }: { prefill?: Prefill }) {
 
   const runBatch = async () => {
     const lines = batchText.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 50);
-    const out: { text: string; url: string }[] = [];
-    for (const l of lines) {
-      out.push({ text: l, url: await QRCode.toDataURL(l, { width: 180, margin: 2 }) });
+    try {
+      const out: { text: string; url: string }[] = [];
+      for (const l of lines) {
+        out.push({ text: l, url: await QRCode.toDataURL(l, { width: 180, margin: 2 }) });
+      }
+      setBatchImages(out);
+      setError('');
+    } catch (e: any) {
+      // 单行内容超出二维码容量时不要静默失败
+      setError(`批量生成失败：${e?.message || e}`);
     }
-    setBatchImages(out);
   };
 
   const [decoded, setDecoded] = useState('');
@@ -110,7 +116,7 @@ export function QrcodePage({ prefill }: { prefill?: Prefill }) {
     <div>
       <div class="grid2">
         <div>
-          <textarea class="code" style="min-height:80px" value={text} onInput={(e) => setText((e.target as HTMLTextAreaElement).value)} placeholder="文本 / URL" />
+          <CodeArea value={text} onInput={setText} minHeight={90} placeholder="文本 / URL" />
           <div class="row" style="margin-top:8px">
             <label class="small">尺寸</label>
             <input type="number" value={size} style="width:70px" onInput={(e) => setSize(Math.min(1024, Math.max(64, Number((e.target as HTMLInputElement).value) || 256)))} />
@@ -145,7 +151,7 @@ export function QrcodePage({ prefill }: { prefill?: Prefill }) {
       </div>
 
       <Section title="批量生成（每行一个内容，最多 50 个）">
-        <textarea class="code" style="min-height:60px" value={batchText} onInput={(e) => setBatchText((e.target as HTMLTextAreaElement).value)} placeholder={'https://a.com\nhttps://b.com'} />
+        <CodeArea value={batchText} onInput={setBatchText} minHeight={80} placeholder={'https://a.com\nhttps://b.com'} />
         <div class="row" style="margin-top:6px">
           <Btn onClick={runBatch}>生成</Btn>
           {batchImages.length > 0 && (

@@ -1,5 +1,7 @@
 /** 时间戳核心逻辑（纯函数，供 webview 与测试共用） */
 
+import { normalizeInput, toSingleLine } from './text';
+
 export type TsUnit = 's' | 'ms' | 'us' | 'ns';
 
 export interface TsDetect {
@@ -10,7 +12,8 @@ export interface TsDetect {
 
 /** 按位数自动识别单位：10 位秒 / 13 位毫秒 / 16 位微秒 / 19 位纳秒 */
 export function detectTimestamp(input: string): TsDetect | null {
-  const t = input.trim();
+  // 复制时间戳时常带 BOM / 换行 / 零宽字符，先归一化再判断位数
+  const t = normalizeInput(input).trim();
   if (!/^\d{9,20}$/.test(t)) return null;
   const len = t.length;
   let unit: TsUnit;
@@ -102,9 +105,11 @@ export function relativeTime(millis: number, now = Date.now()): string {
 
 /** 日期字符串 → 毫秒（按指定时区解释 yyyy-MM-dd[ HH:mm[:ss]]） */
 export function parseDateInTz(dateStr: string, timeZone: string): number | null {
-  const m = dateStr.trim().match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/);
+  const source = toSingleLine(dateStr);
+  if (!source) return null;
+  const m = source.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/);
   if (!m) {
-    const t = Date.parse(dateStr);
+    const t = Date.parse(source);
     return Number.isNaN(t) ? null : t;
   }
   // 构造 UTC 时间，再通过时区偏移修正：找出让 timeZone 本地时间等于输入的 UTC 毫秒

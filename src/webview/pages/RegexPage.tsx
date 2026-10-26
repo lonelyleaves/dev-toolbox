@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useState, useEffect, useMemo } from 'preact/hooks';
 import { runRegex, explainRegex, REGEX_LIBRARY } from '../../logic/regexx';
-import { CopyBtn, Section, Btn, usePersistentState, clipPrefill } from '../components';
+import { CopyBtn, Section, Btn, CodeArea, usePersistentState, clipPrefill } from '../components';
 import { Prefill } from '../app';
 
 export function RegexPage({ prefill }: { prefill?: Prefill }) {
@@ -58,7 +58,7 @@ export function RegexPage({ prefill }: { prefill?: Prefill }) {
         ))}
       </div>
 
-      <textarea class="code" placeholder="测试文本" value={subject} onInput={(e) => setSubject((e.target as HTMLTextAreaElement).value)} style="min-height:100px" />
+      <CodeArea value={subject} onInput={setSubject} minHeight={120} placeholder="测试文本" />
 
       <div class="row" style="margin:8px 0">
         <span class="badge info">{matches.length} 处匹配</span>

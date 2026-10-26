@@ -2,7 +2,7 @@
   "name": "dev-toolbox",
   "displayName": "DevToolbox 开发者工具箱",
   "description": "时间戳 / Cron / Diff / cURL / JSON / Java转JSON / 正则 / 数据字典 / SQL格式化 / SQL还原 / 二维码 / 编码转换 / 颜色哈希 / UUID 一体化开发者工具箱",
-  "version": "0.6.1",
+  "version": "0.6.4",
   "publisher": "local",
   "author": "Leo",
   "license": "MIT",

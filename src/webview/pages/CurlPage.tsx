@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useState, useEffect, useMemo } from 'preact/hooks';
 import { parseCurl, generateCode, ParsedCurl } from '../../logic/curlx';
-import { Btn, CopyBtn, Section, useHistory, usePersistentState, clipPrefill } from '../components';
+import { Btn, CopyBtn, CodeArea, Section, useHistory, usePersistentState, clipPrefill } from '../components';
 import { host } from '../bridge';
 import { Prefill } from '../app';
 import { HttpResponseData } from '../../core/messaging';
@@ -65,7 +65,7 @@ export function CurlPage({ prefill }: { prefill?: Prefill }) {
 
   return (
     <div>
-      <textarea class="code" style="min-height:90px" value={command} onInput={(e) => setCommand((e.target as HTMLTextAreaElement).value)} placeholder="粘贴 curl 命令" />
+      <CodeArea value={command} onInput={setCommand} minHeight={110} placeholder="粘贴 curl 命令（支持多行、\ 或 ` 或 ^ 续行）" />
       <div class="toolbar">
         <Btn primary onClick={send} disabled={sending || !parsed?.url}>{sending ? '发送中…' : '发送请求'}</Btn>
         {history.items.length > 0 && (
@@ -98,7 +98,7 @@ export function CurlPage({ prefill }: { prefill?: Prefill }) {
           ))}
           <Btn onClick={() => setParsed({ ...parsed, headers: { ...parsed.headers, '': '' } })}>+ Header</Btn>
           <div class="small muted" style="margin-top:6px">Body</div>
-          <textarea class="code" style="min-height:60px" value={parsed.body} onInput={(e) => setParsed({ ...parsed, body: (e.target as HTMLTextAreaElement).value })} />
+          <CodeArea value={parsed.body} onInput={(v) => setParsed({ ...parsed, body: v })} minHeight={60} />
         </Section>
       )}
 

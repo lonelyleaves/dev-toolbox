@@ -4,6 +4,7 @@ import {
   detectTimestamp, formatMillis, formatVariants, relativeTime, nowByUnit,
   parseDateInTz, batchConvert, COMMON_TIMEZONES, TsUnit,
 } from '../../logic/timestamp';
+import { normalizeInput } from '../../logic/text';
 import { CopyBtn, Section, Btn, clipPrefill } from '../components';
 import { Prefill } from '../app';
 
@@ -57,7 +58,7 @@ export function TimestampPage({ prefill }: { prefill?: Prefill }) {
       <div class="grid2">
         <Section title="时间戳 → 日期">
           <input type="text" class="mono" style="width:100%" placeholder="粘贴时间戳（自动识别 s/ms/us/ns）"
-            value={tsInput} onInput={(e) => setTsInput((e.target as HTMLInputElement).value)} />
+            value={tsInput} onInput={(e) => setTsInput(normalizeInput((e.target as HTMLInputElement).value))} />
           {det && (
             <div style="margin-top:8px">
               <div class="kv">

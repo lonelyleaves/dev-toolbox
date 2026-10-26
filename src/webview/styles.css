@@ -195,6 +195,68 @@ textarea.code {
   padding: 8px 10px;
 }
 
+/* ---------- 带行号的代码输入框 ---------- */
+.code-wrap {
+  --dt-code-lh: calc(var(--vscode-editor-font-size, 13px) * 1.55);
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  border: 1px solid var(--vscode-input-border, color-mix(in srgb, var(--vscode-foreground) 18%, transparent));
+  border-radius: var(--radius-sm);
+  background: var(--vscode-input-background);
+  overflow: hidden;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+  /* 行号栏与文本区必须同字体同字号，否则行号会错位 */
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--vscode-editor-font-size, 13px);
+}
+.code-wrap:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.code-wrap > textarea.code {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--dt-code-min-h, 140px);
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: var(--dt-code-lh);
+  /* 软换行：超宽内容在框内折行（break-all 让折行位置可预测，行号才能精确对齐） */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  overflow-x: hidden;
+  overflow-y: auto;
+  tab-size: 4;
+}
+.code-wrap > textarea.code:focus {
+  border: none;
+  box-shadow: none;
+}
+.code-gutter {
+  flex: none;
+  min-width: 36px;
+  padding: 8px 8px 8px 6px;
+  overflow: hidden;
+  text-align: right;
+  white-space: pre;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: var(--dt-code-lh);
+  color: var(--vscode-editorLineNumber-foreground, var(--vscode-foreground));
+  opacity: 0.6;
+  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+  border-right: 1px solid var(--vscode-panel-border);
+  user-select: none;
+  pointer-events: none;
+  cursor: text;
+}
+
 /* ---------- 输出 ---------- */
 pre.out {
   background: var(--vscode-textCodeBlock-background);
