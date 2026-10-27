@@ -453,3 +453,27 @@ describe('写盘失败必须让用户知道', () => {
     await unmount();
   });
 });
+
+describe('重复按钮合并', () => {
+  it('项目栏不再有「连接配置」按钮（入口统一收敛到页签行，状态点仍可点进配置）', async () => {
+    const { ProjectBar } = await import('../src/webview/pages/dictionary/panels');
+    const projects = [{ id: 'p1', name: 'A', createdAt: '', updatedAt: '', sourceCount: 1, tableCount: 1, configSummary: { db: true, kingdee: false } }];
+    const { container, unmount } = await mount(h(ProjectBar, {
+      projects, currentId: 'p1', onSwitch: () => {}, onCreate: () => {}, onRename: () => {},
+      onClear: () => {}, onDelete: () => {}, onExport: () => {}, onImport: () => {}, onConfig: () => {},
+    }));
+    const btns = [...container.querySelectorAll('button')].map((b) => (b.textContent || '').trim());
+    expect(btns).not.toContain('连接配置');
+    // 状态点入口保留：点击状态点应触发 onConfig
+    let called = 0;
+    await unmount();
+    const { container: c2 } = await mount(h(ProjectBar, {
+      projects, currentId: 'p1', onSwitch: () => {}, onCreate: () => {}, onRename: () => {},
+      onClear: () => {}, onDelete: () => {}, onExport: () => {}, onImport: () => {},
+      onConfig: () => { called++; },
+    }));
+    (c2.querySelector('.dot') as HTMLElement).click();
+    expect(called).toBe(1);
+    await unmount();
+  });
+});

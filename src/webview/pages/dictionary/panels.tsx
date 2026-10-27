@@ -80,7 +80,6 @@ export function ProjectBar(p: {
       />
       <Btn onClick={() => { if (name.trim()) { p.onCreate(name.trim()); setName(''); } }}>+ 新建项目</Btn>
       <Btn onClick={() => { const n = cur ? prompt('重命名项目', cur.name) : null; if (n && n.trim()) p.onRename(n.trim()); }}>重命名</Btn>
-      <Btn onClick={p.onConfig} title="配置本项目的数据库连接与金蝶连接（切换项目会自动切换这套连接）">连接配置</Btn>
       <Btn onClick={p.onImport}>导入项目包</Btn>
       <Btn onClick={p.onExport}>导出项目包</Btn>
       <Btn onClick={() => { if (cur && confirm(`清空项目「${cur.name}」的所有字典数据与来源？项目本身保留。`)) p.onClear(); }}>清空</Btn>
