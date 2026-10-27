@@ -1,5 +1,24 @@
 # CHANGELOG
 
+## [0.6.9] - 2026-10-27
+
+### Added
+- **比对修复支持三基线来源**：SQL Server / MySQL / 金蝶 WebAPI / JSON 文件（.dtcat.json）
+  基线来源单选切换；WebAPI 复用「扩展字段」页签的金蝶直连表单（抽为共享组件 KingdeeWebApiForm）
+  JSON 分支抽出 parseDtcat 校验解析（「导入」页签同源逻辑）
+- 拉取后显示基线标签（[SQL Server] host:port/db、[金蝶 WebAPI] 表单清单、[JSON] 文件名）
+- 以基线为准回写字典统一走 mergeBaseIntoTarget（带变更标记）
+- 金蝶 WebAPI 基线的修复 SQL 标注「仅参考，金蝶端无 DDL 执行通道」
+
+### Notes
+- SQL Server / MySQL 连接行按 kind 预填「连接配置」项目连接（client 匹配才预填，密码走凭据库）
+
+### Tests
+- 新增 7 例（基线单选/预填/切换 + parseDtcat 校验），累计 307 例通过
+
+### Fixed
+- SQL Server 拉取报 `Validation failed: Invalid string`：mssql v11 三参绑定修复（原 0.7.2 修复随版本回退并入本版）
+
 ## [0.7.2] - 2026-10-27
 
 ### Fixed

@@ -159,21 +159,13 @@ export function SourcesPanel(p: {
 
 /* ---------------- 金蝶云星空接入 ---------------- */
 
-export function KingdeePanel(p: { projectId?: string | null; onImport: (dict: any, name: string) => void }) {
-  const [raw, setRaw] = useState('');
+/** 金蝶 WebAPI 直连表单（「扩展字段」页签与「比对修复」页签共用） */
+export function KingdeeWebApiForm(p: { projectId?: string | null; onFetched: (dict: DictionaryModel, label: string, raw: string) => void }) {
   const [formIds, setFormIds] = useState('');
   const [secret, setSecret] = useState('');
   const [pwd, setPwd] = useState('');
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
-
-  const doParse = () => {
-    if (!raw.trim()) { setMsg('请先粘贴金蝶元数据或 WebAPI 返回报文'); return; }
-    const d = parseKingdeeMetadata(raw, '金蝶元数据');
-    if (!d.tables.length) { setMsg(`✗ ${d.importErrors[0]?.message || '未识别到表单/字段'}`); return; }
-    p.onImport(d, '金蝶元数据');
-    setMsg(`✓ 解析出 ${d.tables.length} 张表，已按合并规则并入`);
-  };
 
   const doFetch = async () => {
     const ids = formIds.split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean);
@@ -184,17 +176,41 @@ export function KingdeePanel(p: { projectId?: string | null; onImport: (dict: an
       if (secret || pwd) await host.kingdeeSaveSecret(secret || undefined, pwd || undefined, p.projectId ?? undefined);
       const r = await host.kingdeeFetchMetadata(ids, { projectId: p.projectId ?? undefined, appSecret: secret || undefined, password: pwd || undefined });
       if (!r.ok) { setMsg(`✗ ${r.error}`); return; }
-      setRaw(r.text || '');
       const d = parseKingdeeMetadata(r.text || '', '金蝶 ' + ids.join(','));
       if (!d.tables.length) {
-        setMsg(`已取到报文但未能识别结构，可手动检查下方文本框后点"解析并入"。${d.importErrors[0]?.message || ''}`);
+        setMsg(`已取到报文但未能识别结构：${d.importErrors[0]?.message || '未识别到表单/字段'}，可在「扩展字段」页签粘贴报文手动解析。`);
         return;
       }
-      p.onImport(d, `金蝶 ${ids.join(',')}`);
+      p.onFetched(d, `金蝶 ${ids.join(',')}`, r.text || '');
       setMsg(`✓ 拉取并解析出 ${d.tables.length} 张表`);
     } catch (e: any) {
       setMsg(`✗ ${e?.message || e}`);
     } finally { setBusy(false); }
+  };
+
+  return (
+    <div>
+      <div class="toolbar" style="flex-wrap:wrap; gap:8px">
+        <input type="text" placeholder="表单标识，逗号分隔，如 BD_MATERIAL,BD_CUSTOMER" style="flex:1 1 260px" value={formIds} onInput={(e) => setFormIds((e.target as HTMLInputElement).value)} />
+        <input type="password" placeholder="appSecret" style="width:150px" value={secret} onInput={(e) => setSecret((e.target as HTMLInputElement).value)} />
+        <input type="password" placeholder="登录密码" style="width:150px" value={pwd} onInput={(e) => setPwd((e.target as HTMLInputElement).value)} />
+        <Btn primary onClick={doFetch} disabled={busy}>{busy ? '拉取中…' : '拉取元数据'}</Btn>
+      </div>
+      {msg && <div class="small" style="margin-top:6px">{msg}</div>}
+    </div>
+  );
+}
+
+export function KingdeePanel(p: { projectId?: string | null; onImport: (dict: any, name: string) => void }) {
+  const [raw, setRaw] = useState('');
+  const [msg, setMsg] = useState('');
+
+  const doParse = () => {
+    if (!raw.trim()) { setMsg('请先粘贴金蝶元数据或 WebAPI 返回报文'); return; }
+    const d = parseKingdeeMetadata(raw, '金蝶元数据');
+    if (!d.tables.length) { setMsg(`✗ ${d.importErrors[0]?.message || '未识别到表单/字段'}`); return; }
+    p.onImport(d, '金蝶元数据');
+    setMsg(`✓ 解析出 ${d.tables.length} 张表，已按合并规则并入`);
   };
 
   return (
@@ -218,13 +234,14 @@ export function KingdeePanel(p: { projectId?: string | null; onImport: (dict: an
         <div class="small muted" style="margin-bottom:6px">
           接口地址、账套、应用 Id 在设置里配置（devToolbox.kingdee.*）；appSecret 与密码只存 VS Code 凭据库，不进项目文件。
         </div>
-        <div class="toolbar" style="flex-wrap:wrap; gap:8px">
-          <input type="text" placeholder="表单标识，逗号分隔，如 BD_MATERIAL,BD_CUSTOMER" style="flex:1 1 260px" value={formIds} onInput={(e) => setFormIds((e.target as HTMLInputElement).value)} />
-          <input type="password" placeholder="appSecret" style="width:150px" value={secret} onInput={(e) => setSecret((e.target as HTMLInputElement).value)} />
-          <input type="password" placeholder="登录密码" style="width:150px" value={pwd} onInput={(e) => setPwd((e.target as HTMLInputElement).value)} />
-          <Btn primary onClick={doFetch} disabled={busy}>{busy ? '拉取中…' : '拉取元数据'}</Btn>
-        </div>
-        {msg && <div class="small" style="margin-top:6px">{msg}</div>}
+        <KingdeeWebApiForm
+          projectId={p.projectId}
+          onFetched={(d, label, rawText) => {
+            setRaw(rawText);
+            p.onImport(d, label);
+            setMsg(`✓ 拉取并解析出 ${d.tables.length} 张表，报文已放进上方文本框，可再手动调整`);
+          }}
+        />
       </Section>
     </div>
   );

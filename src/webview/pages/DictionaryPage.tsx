@@ -3,7 +3,7 @@ import { useState, useMemo, useEffect } from 'preact/hooks';
 import * as XLSX from 'xlsx';
 import { DictionaryModel, TableDef, ColumnDef, emptyDictionary, PARSER_VERSION, migrateDict, makeSourceId, DictSource, SourceKind } from '../../dictionary/model';
 import { mergeDictionaries, applyResolutions, defaultResolutions, removeSource, MergeConflict, MergeStats } from '../../dictionary/merge';
-import { ProjectBar, SourcesPanel, MergePanel, KingdeePanel, ProjectConfigPanel, TableList, CrossProjectDiffPanel } from './dictionary/panels';
+import { ProjectBar, SourcesPanel, MergePanel, KingdeePanel, KingdeeWebApiForm, ProjectConfigPanel, TableList, CrossProjectDiffPanel } from './dictionary/panels';
 import { parsePdm } from '../../dictionary/pdm';
 import { parseDdl } from '../../dictionary/ddl';
 import { parseMarkdownDict } from '../../dictionary/markdown';
@@ -102,7 +102,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
   const [kwInput, setKwInput] = useState('');
   const [keyword, setKeyword] = useState('');
   const [naming, setNaming] = useState<NamingRules>({ requireComment: true, requirePrimaryKey: true, forbiddenTypes: ['TEXT', 'BLOB'] });
-  const [dbSnap, setDbSnap] = useState<DictionaryModel | null>(null);
+  const [baseline, setBaseline] = useState<RepairBaseline | null>(null);
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [projectConfig, setProjectConfig] = useState<ProjectConfig>(emptyProjectConfig());
@@ -134,8 +134,8 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
   }, [kwInput]);
   /** 载入（或迁移出）当前项目的字典 */
   const loadProject = async (id: string | null, list?: ProjectMeta[]) => {
-    // 切项目前先清空上一个项目的运行时状态：在线库快照、未确认的冲突、连接配置与凭据摘要
-    setDbSnap(null);
+    // 切项目前先清空上一个项目的运行时状态：基线快照、未确认的冲突、连接配置与凭据摘要
+    setBaseline(null);
     setPending(null);
     setConfigHash({});
     if (!id) { setDict(null); setProjectConfig(emptyProjectConfig()); setSecretKeys([]); setDbSecretKeys([]); setCacheMeta({}); return; }
@@ -385,8 +385,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
   };
   const importDtcatWith = async (f: { name: string; path?: string; content: string }) => {
     try {
-      const d = JSON.parse(f.content) as DictionaryModel;
-      if (d.version !== 1 || !Array.isArray(d.tables)) throw new Error('不是有效的 .dtcat.json');
+      const d = parseDtcat(f.content, f.name);
       applyImport(d, mkSource('dtcat', f.name, f.path, d.tables.length));
     } catch (e: any) {
       host.showMessage('error', `加载失败: ${e?.message || e}`);
@@ -641,7 +640,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
         <Btn onClick={importMd} title="导入 Markdown 格式数据字典">MD</Btn>
         <Btn onClick={importExcel} title="导入 Excel 数据字典 (.xlsx/.xls)">Excel</Btn>
         <Btn onClick={saveDtcat} title="保存为 .dtcat.json 文件（可进 Git 版本管理）">保存 .dtcat.json</Btn>
-        <Btn onClick={() => { setDict(null); setDbSnap(null); host.persistState('dict:last', null).catch(() => undefined); }} title="关闭字典并清除缓存">关闭</Btn>
+        <Btn onClick={() => { setDict(null); setBaseline(null); host.persistState('dict:last', null).catch(() => undefined); }} title="关闭字典并清除缓存">关闭</Btn>
       </div>
       <div class="toolbar dc-tabs">
         {TAB_ORDER.map((t) => (
@@ -679,7 +678,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
 
       {tab === 'edit' && table && <EditTable dict={dict} setDict={setDict} table={table} onRename={(newName) => setSelected(newName)} />}
       {tab === 'lint' && <LintPanel dict={dict} setDict={setDict} naming={naming} />}
-      {tab === 'repair' && <RepairPanel dict={dict} setDict={setDict} dbSnap={dbSnap} setDbSnap={setDbSnap} preset={projectConfig.connections?.db} projectId={currentId} />}
+      {tab === 'repair' && <RepairPanel dict={dict} setDict={setDict} baseline={baseline} setBaseline={setBaseline} preset={projectConfig.connections?.db} projectId={currentId} />}
       {tab === 'xdiff' && (
         <CrossProjectDiffPanel
           projects={projects}
@@ -972,66 +971,131 @@ function LintPanel({ dict, setDict, naming: initialRules }: { dict: DictionaryMo
 }
 
 // ---------- 比对修复 ----------
-export function RepairPanel({ dict, setDict, dbSnap, setDbSnap, preset, projectId }: {
+export type BaselineKind = 'sqlserver' | 'mysql' | 'webapi' | 'json';
+export interface RepairBaseline { dict: DictionaryModel; kind: BaselineKind; label: string; }
+
+const BASELINE_KINDS: { id: BaselineKind; label: string }[] = [
+  { id: 'sqlserver', label: 'SQL Server' },
+  { id: 'mysql', label: 'MySQL' },
+  { id: 'webapi', label: '金蝶 WebAPI' },
+  { id: 'json', label: 'JSON 文件' },
+];
+
+/** .dtcat.json 校验解析（「导入」页签与「比对修复」JSON 基线共用） */
+export function parseDtcat(content: string, name: string): DictionaryModel {
+  let d: any;
+  try { d = JSON.parse(content); } catch (e: any) { throw new Error(`${name}: 不是合法 JSON（${e?.message || e}）`); }
+  if (!d || d.version !== 1 || !Array.isArray(d.tables)) throw new Error(`${name} 不是有效的 .dtcat.json`);
+  return d as DictionaryModel;
+}
+
+/** 基线 kind → 项目连接预填（client 匹配才预填；密码不回显，走凭据库） */
+function connFor(kind: 'sqlserver' | 'mysql', preset?: ProjectConfig['connections']['db']): DbConnInfo {
+  const client: DbConnInfo['client'] = kind === 'sqlserver' ? 'mssql' : 'mysql';
+  const p = preset && preset.client === client ? preset : undefined;
+  return {
+    client,
+    host: p?.host || '127.0.0.1',
+    port: p?.port || (kind === 'sqlserver' ? 1433 : 3306),
+    user: p?.user || (kind === 'sqlserver' ? 'sa' : 'root'),
+    password: '',
+    database: p?.database || '',
+  };
+}
+
+export function RepairPanel({ dict, setDict, baseline, setBaseline, preset, projectId }: {
   dict: DictionaryModel; setDict: (d: DictionaryModel) => void;
-  dbSnap: DictionaryModel | null; setDbSnap: (d: DictionaryModel | null) => void;
+  baseline: RepairBaseline | null; setBaseline: (b: RepairBaseline | null) => void;
   preset?: ProjectConfig['connections']['db']; projectId?: string | null;
 }) {
-  // 初值来自「连接配置」页签的本项目 DB 连接（与 导入 页签同一套 preset）；
-  // 密码不回显——留空则按 projectId 走该项目凭据库，手动填了则拉取成功后回存
-  const [info, setInfo] = useState<DbConnInfo>({
-    client: preset?.client || 'mysql',
-    host: preset?.host || '127.0.0.1',
-    port: preset?.port || 3306,
-    user: preset?.user || 'root',
-    password: '',
-    database: preset?.database || '',
-  });
+  const [kind, setKind] = useState<BaselineKind>('sqlserver');
+  const [info, setInfo] = useState<DbConnInfo>(() => connFor('sqlserver', preset));
+  const [jsonPicked, setJsonPicked] = useState('');
   const [includeDangerous, setIncludeDangerous] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
-  const items: DiffItem[] = useMemo(() => (dbSnap ? diffDictionaries(dbSnap, dict) : []), [dbSnap, dict]);
-  const fixSql = useMemo(() => (dbSnap ? generateFixSql(dbSnap, dict, includeDangerous) : []), [dbSnap, dict, includeDangerous]);
+  const items: DiffItem[] = useMemo(() => (baseline ? diffDictionaries(baseline.dict, dict) : []), [baseline, dict]);
+  const fixSql = useMemo(() => (baseline ? generateFixSql(baseline.dict, dict, includeDangerous) : []), [baseline, dict, includeDangerous]);
 
-  const applyPreset = () => {
-    if (!preset) return;
-    setInfo({ client: preset.client || 'mysql', host: preset.host || '127.0.0.1', port: preset.port || 3306, user: preset.user || 'root', password: '', database: preset.database || '' });
+  const isDb = kind === 'sqlserver' || kind === 'mysql';
+  const presetConn = preset && preset.client === (kind === 'sqlserver' ? 'mssql' : 'mysql') ? preset : undefined;
+
+  const switchKind = (k: BaselineKind) => {
+    setKind(k);
+    if (k === 'sqlserver' || k === 'mysql') setInfo(connFor(k, preset));
+    setErr('');
   };
 
-  const pull = async () => {
+  const pullDb = async () => {
     setBusy(true); setErr('');
     try {
       const conn = { ...info, projectId: projectId ?? undefined };
-      setDbSnap(await host.dbIntrospect(conn));
+      const d = await host.dbIntrospect(conn);
       if (info.password) await host.dbSavePassword({ ...conn, secretKey: undefined }, info.password);
+      setJsonPicked('');
+      setBaseline({ dict: d, kind, label: `${info.host}:${info.port}/${info.database}` });
+    } catch (e: any) { setErr(String(e?.message || e)); }
+    setBusy(false);
+  };
+
+  const pickJson = async () => {
+    setBusy(true); setErr('');
+    try {
+      const f = await host.openTextFile();
+      if (!f) return;
+      const d = parseDtcat(f.content, f.name);
+      setJsonPicked(`${f.name}（${d.tables.length} 表）`);
+      setBaseline({ dict: d, kind: 'json', label: f.name });
     } catch (e: any) { setErr(String(e?.message || e)); }
     setBusy(false);
   };
 
   return (
     <div>
-      <Section title="拉取真实库结构作为比对基准（现状）">
-        <div class="row">
-          <ClientPicker info={info} onChange={setInfo} />
-          <input type="text" style="width:120px" placeholder="host" value={info.host} onInput={(e) => setInfo({ ...info, host: (e.target as HTMLInputElement).value })} />
-          <input type="number" style="width:60px" value={info.port} onInput={(e) => setInfo({ ...info, port: Number((e.target as HTMLInputElement).value) })} />
-          <input type="text" style="width:80px" placeholder="user" value={info.user} onInput={(e) => setInfo({ ...info, user: (e.target as HTMLInputElement).value })} />
-          <input type="password" style="width:100px" placeholder="password" value={info.password} onInput={(e) => setInfo({ ...info, password: (e.target as HTMLInputElement).value })} />
-          <input type="text" style="width:120px" placeholder={DB_PLACEHOLDER[info.client]} value={info.database} onInput={(e) => setInfo({ ...info, database: (e.target as HTMLInputElement).value })} />
-          {preset && <Btn onClick={applyPreset} title="手动改过？一键还原为「连接配置」页签里的本项目 DB 连接（密码走项目凭据库）">项目连接</Btn>}
-          <Btn primary onClick={pull} disabled={busy || !info.database}>{busy ? '拉取中…' : '拉取库结构'}</Btn>
+      <Section title="拉取真实结构作为比对基准（现状）">
+        <div class="row" style="margin-bottom:6px;gap:14px">
+          <span class="small muted">基线来源：</span>
+          {BASELINE_KINDS.map((k) => (
+            <label class="small" key={k.id} style="cursor:pointer">
+              <input type="radio" name="dt-baseline-kind" checked={kind === k.id} onChange={() => switchKind(k.id)} /> {k.label}
+            </label>
+          ))}
         </div>
+        {isDb && (
+          <div class="row">
+            <span class="badge info" style="align-self:center">{kind === 'sqlserver' ? 'SQL Server' : 'MySQL'}</span>
+            <input type="text" style="width:120px" placeholder="host" value={info.host} onInput={(e) => setInfo({ ...info, host: (e.target as HTMLInputElement).value })} />
+            <input type="number" style="width:60px" value={info.port} onInput={(e) => setInfo({ ...info, port: Number((e.target as HTMLInputElement).value) })} />
+            <input type="text" style="width:80px" placeholder="user" value={info.user} onInput={(e) => setInfo({ ...info, user: (e.target as HTMLInputElement).value })} />
+            <input type="password" style="width:100px" placeholder="password" value={info.password} onInput={(e) => setInfo({ ...info, password: (e.target as HTMLInputElement).value })} />
+            <input type="text" style="width:120px" placeholder="database" value={info.database} onInput={(e) => setInfo({ ...info, database: (e.target as HTMLInputElement).value })} />
+            {presetConn && <Btn onClick={() => setInfo(connFor(kind, preset))} title="手动改过？一键还原为「连接配置」页签里的本项目 DB 连接（密码走项目凭据库）">项目连接</Btn>}
+            <Btn primary onClick={pullDb} disabled={busy || !info.database}>{busy ? '拉取中…' : '拉取库结构'}</Btn>
+          </div>
+        )}
+        {kind === 'webapi' && (
+          <div>
+            <div class="small muted" style="margin-bottom:6px">走项目金蝶配置（「连接配置」页签）拉取表单元数据；appSecret / 密码留空则用项目凭据库已存值。</div>
+            <KingdeeWebApiForm projectId={projectId} onFetched={(d, label) => { setJsonPicked(''); setBaseline({ dict: d, kind: 'webapi', label }); }} />
+          </div>
+        )}
+        {kind === 'json' && (
+          <div class="row">
+            <Btn onClick={pickJson} disabled={busy}>{jsonPicked ? '重选 .dtcat.json' : '选择 .dtcat.json'}</Btn>
+            {jsonPicked && <span class="small muted">{jsonPicked}</span>}
+          </div>
+        )}
         {err && <div class="error-text">{err}</div>}
       </Section>
 
-      {dbSnap && (
+      {baseline && (
         <div>
           <div class="row" style="margin-bottom:8px">
             <span class="badge info">差异 {items.length}</span>
             <span class="badge err">危险 {items.filter((i) => i.dangerous).length}</span>
             <label class="small"><input type="checkbox" checked={includeDangerous} onInput={(e) => setIncludeDangerous((e.target as HTMLInputElement).checked)} /> 包含危险操作（DROP）</label>
-            <span class="muted small">期望 = 当前字典（{dict.tables.length} 表），现状 = 库（{dbSnap.tables.length} 表）</span>
+            <span class="muted small">期望 = 当前字典（{dict.tables.length} 表），基线 = [{BASELINE_KINDS.find((k) => k.id === baseline!.kind)?.label}] {baseline.label}（{baseline.dict.tables.length} 表）</span>
           </div>
           <div class="grid2">
             <Section title="差异明细">
@@ -1046,16 +1110,19 @@ export function RepairPanel({ dict, setDict, dbSnap, setDbSnap, preset, projectI
                         <td class="small">{it.changes.map((c) => `${c.prop}: ${c.from} → ${c.to}`).join('；')}</td>
                       </tr>
                     ))}
-                    {items.length === 0 && <tr><td colspan={5} class="muted">字典与库完全一致 🎉</td></tr>}
+                    {items.length === 0 && <tr><td colspan={5} class="muted">字典与基线完全一致 🎉</td></tr>}
                   </tbody>
                 </table>
               </div>
               <div class="row" style="margin-top:6px">
-                <Btn onClick={() => setDict(mergeBaseIntoTarget(dbSnap, dict))}>以库为准回写字典（带变更标记）</Btn>
-                <CopyBtn text={() => diffReportMarkdown(dbSnap, dict, items)} label="复制差异报告(MD)" />
+                <Btn onClick={() => setDict(mergeBaseIntoTarget(baseline!.dict, dict))}>以基线为准回写字典（带变更标记）</Btn>
+                <CopyBtn text={() => diffReportMarkdown(baseline!.dict, dict, items)} label="复制差异报告(MD)" />
               </div>
             </Section>
             <Section title={`修复 SQL（以字典为准，${fixSql.length} 条）`}>
+              {baseline.kind === 'webapi' && (
+                <div class="small muted" style="margin-bottom:6px">仅参考：金蝶端没有 DDL 执行通道，以下 SQL 只用于你自己数据库的对齐，不要在金蝶上执行。</div>
+              )}
               <pre class="out" style="max-height:340px">{fixSql.join('\n') || '无需修复'}</pre>
               <div class="row">
                 <CopyBtn text={() => fixSql.join('\n')} label="复制 SQL" />

@@ -583,20 +583,43 @@ describe('EncodePage EAS 报文解析模式', () => {
   });
 });
 
-describe('RepairPanel 连接配置打通', () => {
+describe('RepairPanel 三基线（SQL Server / MySQL / 金蝶 WebAPI / JSON）', () => {
   async function mountRepair(preset?: any) {
     const { RepairPanel } = await import('../src/webview/pages/DictionaryPage');
     const dict = { name: 'x', tables: [] } as any;
     const container = document.createElement('div');
     document.body.appendChild(container);
-    await act(async () => { render(h(RepairPanel, { dict, setDict: () => {}, dbSnap: null, setDbSnap: () => {}, preset, projectId: 'p1' }), container); });
+    await act(async () => { render(h(RepairPanel, { dict, setDict: () => {}, baseline: null, setBaseline: () => {}, preset, projectId: 'p1' }), container); });
     await flush();
     return container;
   }
   const inputs = (c: HTMLElement) => [...c.querySelectorAll('input')] as HTMLInputElement[];
+  const radios = (c: HTMLElement) => [...c.querySelectorAll('input[type="radio"]')] as HTMLInputElement[];
+  const switchKind = async (c: HTMLElement, label: string) => {
+    const r = radios(c).find((el) => (el.parentElement as HTMLElement).textContent?.includes(label));
+    if (!r) return;
+    r.click();
+    await flush();
+  };
 
-  it('有 preset 时：字段预填项目连接 + 出现「项目连接」还原按钮', async () => {
-    const c = await mountRepair({ client: 'sqlserver', host: 'prod.example.cn', port: 1433, user: 'sa', database: 'ERP_DB' });
+  it('默认 SQL Server：4 个基线单选 + 连接行预填 1433/sa，无「项目连接」按钮', async () => {
+    const c = await mountRepair(undefined);
+    expect(radios(c).length).toBe(4);
+    const t = c.textContent || '';
+    expect(t).toContain('SQL Server');
+    expect(t).toContain('MySQL');
+    expect(t).toContain('金蝶 WebAPI');
+    expect(t).toContain('JSON 文件');
+    const port = inputs(c).find((i) => i.type === 'number') as HTMLInputElement;
+    expect(port.value).toBe('1433');
+    const btns = [...c.querySelectorAll('button')].map((b) => b.textContent || '');
+    expect(btns).toContain('拉取库结构');
+    expect(btns).not.toContain('项目连接');
+    document.body.removeChild(c);
+  });
+
+  it('mssql preset：预填项目连接 + 出现「项目连接」还原按钮；MySQL preset 不串扰', async () => {
+    const c = await mountRepair({ client: 'mssql', host: 'prod.example.cn', port: 1433, user: 'sa', database: 'ERP_DB' });
     const vals = inputs(c).map((i) => i.value);
     expect(vals).toContain('prod.example.cn');
     expect(vals).toContain('ERP_DB');
@@ -604,26 +627,54 @@ describe('RepairPanel 连接配置打通', () => {
     const btns = [...c.querySelectorAll('button')].map((b) => b.textContent || '');
     expect(btns).toContain('项目连接');
     document.body.removeChild(c);
+
+    const c2 = await mountRepair({ client: 'mysql', host: '10.0.0.2', port: 3307, user: 'dev', database: 'erp' });
+    // 默认 kind=sqlserver，mysql preset 不应预填到 SQL Server 连接行
+    const vals2 = inputs(c2).map((i) => i.value);
+    expect(vals2).not.toContain('10.0.0.2');
+    document.body.removeChild(c2);
   });
 
-  it('无 preset 时：默认 127.0.0.1/mysql，不出现「项目连接」按钮', async () => {
+  it('切到 MySQL：连接行改 3306/root', async () => {
     const c = await mountRepair(undefined);
-    const btns = [...c.querySelectorAll('button')].map((b) => b.textContent || '');
-    expect(btns).not.toContain('项目连接');
-    expect(inputs(c).some((i) => i.value === '127.0.0.1')).toBe(true);
+    await switchKind(c, 'MySQL');
+    const port = inputs(c).find((i) => i.type === 'number') as HTMLInputElement;
+    expect(port.value).toBe('3306');
+    const user = inputs(c).find((i) => i.placeholder === 'user') as HTMLInputElement;
+    expect(user.value).toBe('root');
     document.body.removeChild(c);
   });
 
-  it('点「项目连接」把手改回的值还原为 preset', async () => {
-    const preset = { client: 'sqlserver', host: 'prod.example.cn', port: 1433, user: 'sa', database: 'ERP_DB' };
-    const c = await mountRepair(preset);
-    const hostInput = inputs(c).find((i) => i.placeholder === 'host') as HTMLInputElement;
-    hostInput.value = '10.99.0.1';
-    hostInput.dispatchEvent(new Event('input'));
-    await flush();
-    [...c.querySelectorAll('button')].find((b) => (b.textContent || '') === '项目连接')!.click();
-    await flush();
-    expect((inputs(c).find((i) => i.placeholder === 'host') as HTMLInputElement).value).toBe('prod.example.cn');
+  it('切到 金蝶 WebAPI：出「拉取元数据」，连接行消失', async () => {
+    const c = await mountRepair(undefined);
+    await switchKind(c, '金蝶 WebAPI');
+    const t = c.textContent || '';
+    expect(t).toContain('拉取元数据');
+    expect(inputs(c).some((i) => (i.placeholder || '').includes('表单标识'))).toBe(true);
+    expect(inputs(c).some((i) => i.placeholder === 'host')).toBe(false);
     document.body.removeChild(c);
+  });
+
+  it('切到 JSON 文件：出「选择 .dtcat.json」按钮', async () => {
+    const c = await mountRepair(undefined);
+    await switchKind(c, 'JSON 文件');
+    const btns = [...c.querySelectorAll('button')].map((b) => b.textContent || '');
+    expect(btns).toContain('选择 .dtcat.json');
+    expect(inputs(c).some((i) => i.placeholder === 'host')).toBe(false);
+    document.body.removeChild(c);
+  });
+});
+
+describe('parseDtcat（.dtcat.json 校验解析）', () => {
+  it('合法内容返回字典', async () => {
+    const { parseDtcat } = await import('../src/webview/pages/DictionaryPage');
+    const d = parseDtcat(JSON.stringify({ version: 1, tables: [{ name: 'T1', columns: [] }] }), 'a.json');
+    expect(d.tables[0].name).toBe('T1');
+  });
+  it('非法 JSON / 缺 version / 非对象 均报错', async () => {
+    const { parseDtcat } = await import('../src/webview/pages/DictionaryPage');
+    expect(() => parseDtcat('{oops', 'a.json')).toThrow('不是合法 JSON');
+    expect(() => parseDtcat(JSON.stringify({ tables: [] }), 'b.json')).toThrow('不是有效的 .dtcat.json');
+    expect(() => parseDtcat('null', 'c.json')).toThrow('不是有效的 .dtcat.json');
   });
 });
