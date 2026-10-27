@@ -233,6 +233,13 @@ export async function kingdeeFetchMetadata(
       } as any);
       const text = String(res.bodyText ?? '');
       if (!text) return { ok: false, error: `接口无返回（HTTP ${res.status}）` };
+      // 401/403 常见于"没带会话 Cookie 且服务端要求鉴权"：给出可操作的排查指引，而不是让原始报文流进解析层
+      if (res.status === 401 || res.status === 403) {
+        return {
+          ok: false,
+          error: `鉴权被拒（HTTP ${res.status}）：登录未拿到会话 Cookie 且服务端要求鉴权。请检查「高级参数 → 附加请求头」是否需要补充鉴权头，或确认登录接口路径是否正确`,
+        };
+      }
       chunks.push(text);
     }
     // 多个表单时合成一个数组，webview 侧解析器能识别
