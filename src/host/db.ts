@@ -244,8 +244,9 @@ async function introspectMssql(info: DbConnInfo, password: string): Promise<Dict
       LEFT JOIN sys.extended_properties ep ON ep.major_id = t.object_id AND ep.minor_id = 0 AND ep.name = 'MS_Description'
       ORDER BY t.name`)).recordset;
     for (const t of tables) {
-      const table: TableDef = { name: t.n, comment: t.c || undefined, columns: [], indexes: [], foreignKeys: [] };
-      const cols = (await pool.request().input('tn', sql.default.NVarChar(t.n)).query(`
+      const tn = String(t.n ?? '');
+      const table: TableDef = { name: tn, comment: t.c || undefined, columns: [], indexes: [], foreignKeys: [] };
+      const cols = (await pool.request().input('tn', sql.default.NVarChar(200), tn).query(`
         SELECT c.name n,
           t.name + CASE
             WHEN t.name IN ('varchar','nvarchar','char','nchar','varbinary') THEN '(' + CASE WHEN c.max_length = -1 THEN 'max' ELSE CAST(CASE WHEN t.name LIKE 'n%' THEN c.max_length/2 ELSE c.max_length END AS varchar) + ')' END
@@ -275,7 +276,7 @@ async function introspectMssql(info: DbConnInfo, password: string): Promise<Dict
           autoIncrement: !!c.idn, comment: c.cmt || undefined,
         });
       }
-      const idx = (await pool.request().input('tn', sql.default.NVarChar(t.n)).query(`
+      const idx = (await pool.request().input('tn', sql.default.NVarChar(200), tn).query(`
         SELECT i.name n, CASE WHEN i.is_unique = 1 THEN 1 ELSE 0 END u,
           STUFF((SELECT ',' + c2.name FROM sys.index_columns ic2 JOIN sys.columns c2 ON c2.object_id = ic2.object_id AND c2.column_id = ic2.column_id
             WHERE ic2.object_id = i.object_id AND ic2.index_id = i.index_id ORDER BY ic2.key_ordinal FOR XML PATH('')), 1, 1, '') cols
@@ -285,7 +286,7 @@ async function introspectMssql(info: DbConnInfo, password: string): Promise<Dict
       for (const i of idx) {
         table.indexes.push({ name: i.n, unique: !!i.u, columns: String(i.cols).split(',') });
       }
-      const fks = (await pool.request().input('tn', sql.default.NVarChar(t.n)).query(`
+      const fks = (await pool.request().input('tn', sql.default.NVarChar(200), tn).query(`
         SELECT fk.name n, COL_NAME(fkc.parent_object_id, fkc.parent_column_id) col,
           OBJECT_NAME(fk.referenced_object_id) rt, COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id) rc
         FROM sys.foreign_keys fk

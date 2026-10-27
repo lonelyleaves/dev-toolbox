@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## [0.7.2] - 2026-10-27
+
+### Fixed
+- **SQL Server 拉取报 `Validation failed: Invalid string`**：mssql v11 API 变更——
+  `input(name, value)` 两参形式中 `sql.NVarChar(x)` 现在是类型描述符工厂，
+  旧写法把描述符当成了参数值，执行时 NVarChar 校验必抛错（且之前参数值实际恒为 NULL）
+  改为 v11 三参形式 `input('tn', sql.NVarChar(200), tn)`
+
+### Tests
+- 新增 1 例回归（mock mssql 锁定 tn 参数值必须绑定为字符串），累计 303 例通过
+
 ## [0.7.1] - 2026-10-27
 
 ### Changed
