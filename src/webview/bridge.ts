@@ -34,7 +34,7 @@ window.addEventListener('message', (e) => {
   }
 });
 
-import { hostCall } from '../core/messaging';
+import { hostCall, CryptoOpsPayload, CryptoOpsResult } from '../core/messaging';
 
 export function call<T = unknown>(cmd: HostCommand, payload?: unknown, timeoutMs?: number): Promise<T> {
   return hostCall<T>(bridge.post, bridge.pending, cmd, payload, timeoutMs);
@@ -92,6 +92,9 @@ export const host = {
   dbTestConnection: (info: DbConnInfo) => call<string>('dbTestConnection', info, 20000),
   dbIntrospect: (info: DbConnInfo) => call<DictionaryModel>('dbIntrospect', info, 120000),
   dbSavePassword: (info: DbConnInfo, password: string) => call('dbSavePassword', { info, password }),
+
+  // ---------- 密码学 / 字符编码运算（宿主 node:crypto + ICU） ----------
+  cryptoOps: (payload: CryptoOpsPayload) => call<CryptoOpsResult>('cryptoOps', payload),
 };
 
 /** 通知宿主 webview 已就绪 */

@@ -477,3 +477,108 @@ describe('重复按钮合并', () => {
     await unmount();
   });
 });
+
+describe('EncodePage 宿主运算模式（hash/aes/des/random/charset）', () => {
+  async function mountEncode() {
+    const { EncodePage } = await import('../src/webview/pages/EncodePage');
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    await act(async () => { render(h(EncodePage, {}), container); });
+    await flush();
+    return {
+      container,
+      unmount: async () => { await act(async () => { render(null, container); }); container.remove(); },
+    };
+  }
+  const selMode = (container: HTMLElement, mode: string) => {
+    const s = container.querySelector('select') as HTMLSelectElement;
+    s.value = mode;
+    s.dispatchEvent(new Event('change'));
+  };
+  const texts = (c: HTMLElement) => c.textContent || '';
+
+  it('默认 base64 模式：双向方向选择存在，无参数区', async () => {
+    const { container, unmount } = await mountEncode();
+    const selects = container.querySelectorAll('select');
+    expect(selects.length).toBe(2); // 模式 + 方向
+    expect(texts(container)).not.toContain('密钥 Key');
+    await unmount();
+  });
+
+  it('切到 hash：方向选择消失（单向），显示算法选择 + HMAC 选项', async () => {
+    const { container, unmount } = await mountEncode();
+    selMode(container, 'hash');
+    await flush();
+    // 方向下拉消失（select 只剩 模式+算法 两个，且无任何 value=encode 的选项）
+    expect(container.querySelectorAll('select').length).toBe(2);
+    expect([...container.querySelectorAll('select')].every((s) => ![...s.options].some((o) => o.value === 'encode'))).toBe(true);
+    expect(texts(container)).toContain('算法');
+    expect(texts(container)).toContain('HMAC');
+    await unmount();
+  });
+
+  it('切到 aes：密钥/IV/Mode/Padding/输出编码 参数齐全，方向标签为加密/解密', async () => {
+    const { container, unmount } = await mountEncode();
+    selMode(container, 'aes');
+    await flush();
+    const t = texts(container);
+    expect(t).toContain('密钥 Key');
+    expect(t).toContain('模式 Mode');
+    expect(t).toContain('填充 Padding');
+    expect(t).toContain('输出编码');
+    expect(t).toContain('加密 →');
+    await unmount();
+  });
+
+  it('切到 aes 选 ECB 后 IV 区消失', async () => {
+    const { container, unmount } = await mountEncode();
+    selMode(container, 'aes');
+    await flush();
+    const modeSel = [...container.querySelectorAll('select')].find((s) => [...s.options].some((o) => o.value === 'cbc')) as HTMLSelectElement;
+    modeSel.value = 'ecb';
+    modeSel.dispatchEvent(new Event('change'));
+    await flush();
+    expect(texts(container)).not.toContain('IV');
+    await unmount();
+  });
+
+  it('切到 random：类型选择 + 密码字符集勾选，无输入校验（可直接生成）', async () => {
+    const { container, unmount } = await mountEncode();
+    selMode(container, 'random');
+    await flush();
+    expect(container.querySelectorAll('select').length).toBe(2); // 模式 + 类型
+    expect(texts(container)).toContain('类型');
+    expect(container.querySelectorAll('input[type="checkbox"]').length).toBe(0); // 默认 uuid 无字符集勾选
+    await unmount();
+  });
+
+  it('切到 charset：目标编码选择出现', async () => {
+    const { container, unmount } = await mountEncode();
+    selMode(container, 'charset');
+    await flush();
+    const t = texts(container);
+    expect(t).toContain('目标编码');
+    expect(t).toContain('GBK');
+    await unmount();
+  });
+});
+
+describe('EncodePage EAS 报文解析模式', () => {
+  it('切换到 eas：无方向选择，显示来源编码参数', async () => {
+    const { EncodePage } = await import('../src/webview/pages/EncodePage');
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    await act(async () => { render(h(EncodePage, {}), container); });
+    await flush();
+    const s = container.querySelector('select') as HTMLSelectElement;
+    s.value = 'eas';
+    s.dispatchEvent(new Event('change'));
+    await flush();
+    const t = container.textContent || '';
+    expect(t).toContain('来源编码');
+    expect(t).toContain('EAS');
+    expect([...container.querySelectorAll('select')].every((el) => ![...el.options].some((o) => o.value === 'encode'))).toBe(true);
+    await act(async () => { render(null, container); });
+    container.remove();
+  });
+});

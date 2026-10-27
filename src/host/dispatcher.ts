@@ -5,6 +5,7 @@ import { toolById } from '../core/tool-registry';
 import { doHttpRequest } from './http';
 import { diffDictionaries } from '../dictionary/diffengine';
 import { testConnection, introspect, saveDbPassword } from './db';
+import { cryptoOps } from './crypto-ops';
 import { parseKingdeeMetadata } from '../dictionary/kingdee';
 import { ProjectStore, projectSecretKey, configHashOf, CacheMeta } from './project-store';
 import { kingdeeFetchMetadata, saveSecret, KingdeeFetchResult, globalKingdeeDefaults, kingdeeTestProject } from './kingdee';
@@ -321,6 +322,10 @@ export async function handleHostCommand(cmd: HostCommand, payload: any, panel: v
     }
     case 'httpRequest': {
       return await doHttpRequest(payload);
+    }
+    // 密码学/字符编码运算（哈希/AES/DES/GBK/随机数）：全同步，纯 node:crypto + ICU
+    case 'cryptoOps': {
+      return cryptoOps(payload as import('../core/messaging').CryptoOpsPayload);
     }
     case 'dbTestConnection':
       return await testConnection(payload, context.secrets);

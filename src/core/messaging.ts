@@ -57,6 +57,44 @@ export interface KingdeeConnectionConfig {
   extraHeaders?: string;
 }
 
+/** 宿主侧密码学/字符编码运算（cryptoOps 命令）：出入参全部 JSON 可序列化 */
+export type ByteEnc = 'utf8' | 'base64' | 'hex';
+export type SymCipher = 'aes' | 'des' | '3des';
+export type SymMode = 'ecb' | 'cbc' | 'cfb' | 'ctr' | 'ofb';
+export type SymPad = 'pkcs7' | 'zero' | 'iso97971' | 'anix923' | 'iso10126' | 'none';
+export type CharsetName = 'utf8' | 'gbk' | 'gb18030' | 'big5';
+
+export interface CryptoOpsPayload {
+  op: 'hash' | 'hmac' | 'symmetric' | 'charset' | 'charsetProbe' | 'random';
+  // hash / hmac
+  algorithm?: string;
+  input?: string;
+  key?: string;
+  keyEnc?: ByteEnc;
+  // symmetric
+  action?: 'encrypt' | 'decrypt';
+  cipher?: SymCipher;
+  mode?: SymMode;
+  padding?: SymPad;
+  iv?: string;
+  ivEnc?: ByteEnc;
+  /** 密文的进/出格式 */
+  outEnc?: ByteEnc;
+  // charset
+  charsetAction?: 'toBytes' | 'fromBytes';
+  charset?: CharsetName;
+  // random
+  randomKind?: 'uuid' | 'password' | 'int' | 'bytes';
+  randomLength?: number;
+  randomChars?: { upper?: boolean; lower?: boolean; digits?: boolean; symbols?: boolean };
+  randomMin?: number;
+  randomMax?: number;
+}
+
+export type CryptoOpsResult =
+  | ({ ok: true; text?: string; supports?: Record<string, boolean> } & Record<string, unknown>)
+  | { ok: false; error: string; supports?: Record<string, boolean> };
+
 export interface ProjectConfig {
   connections: {
     db?: DbConnectionConfig;
@@ -105,7 +143,8 @@ export type HostCommand =
   | 'getClipboard'
   | 'showMessage'
   | 'persistState'
-  | 'readState';
+  | 'readState'
+  | 'cryptoOps';
 
 export interface HttpRequestPayload {
   method: string;

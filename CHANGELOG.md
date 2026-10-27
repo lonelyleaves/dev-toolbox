@@ -1,5 +1,23 @@
 # CHANGELOG
 
+## [0.7.0] - 2026-10-27
+
+### Added
+- **编码转换扩至 15 种模式**（原 6 种），对齐业界在线工具集并覆盖 EAS/ERP 报文场景：
+  - 纯文本：全角/半角、码点（文本 ↔ U+XXXX）、摩斯电码
+  - 密码学（宿主 node:crypto）：Hash（MD5/SHA1/256/384/512 + HMAC）、AES（5 模式 6 填充，密钥/IV 支持文本/Base64/Hex）、DES/3DES
+  - 字符编码（Node ICU）：GBK / GB18030 / Big5 ↔ UTF-8 字节（缺 ICU 时明确报错不静默降级）
+  - 随机生成：UUID v4 / 随机密码 / 随机数 / 随机字节（crypto 而非 Math.random）
+  - EAS 报文一键解析：Base64 → 字符编码（GBK 失败自动按 UTF-8 重试）→ XML 实体还原
+- **参数化交互**：各模式动态参数区（AES 的 ECB 隐藏 IV/流模式隐藏填充等），单向模式隐藏方向选择
+
+### Notes
+- OpenSSL 3 封锁单 DES：单 DES 走 des-ede3(K,K,K) 通道（数学上等价 E(K,M)，密文与老 OpenSSL 一致）
+- 解密输出按 UTF-8 出明文（修复旧实现把明文再按 outEnc 编码一层的方向错误）
+
+### Tests
+- 新增 46 例（crypto-ops 20 / encodex 19 / EncodePage UI 7），累计 299 例通过
+
 ## [0.6.9] - 2026-10-27
 
 ### Fixed
