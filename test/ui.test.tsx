@@ -582,3 +582,48 @@ describe('EncodePage EAS 报文解析模式', () => {
     container.remove();
   });
 });
+
+describe('RepairPanel 连接配置打通', () => {
+  async function mountRepair(preset?: any) {
+    const { RepairPanel } = await import('../src/webview/pages/DictionaryPage');
+    const dict = { name: 'x', tables: [] } as any;
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    await act(async () => { render(h(RepairPanel, { dict, setDict: () => {}, dbSnap: null, setDbSnap: () => {}, preset, projectId: 'p1' }), container); });
+    await flush();
+    return container;
+  }
+  const inputs = (c: HTMLElement) => [...c.querySelectorAll('input')] as HTMLInputElement[];
+
+  it('有 preset 时：字段预填项目连接 + 出现「项目连接」还原按钮', async () => {
+    const c = await mountRepair({ client: 'sqlserver', host: 'prod.example.cn', port: 1433, user: 'sa', database: 'ERP_DB' });
+    const vals = inputs(c).map((i) => i.value);
+    expect(vals).toContain('prod.example.cn');
+    expect(vals).toContain('ERP_DB');
+    expect(vals).toContain('sa');
+    const btns = [...c.querySelectorAll('button')].map((b) => b.textContent || '');
+    expect(btns).toContain('项目连接');
+    document.body.removeChild(c);
+  });
+
+  it('无 preset 时：默认 127.0.0.1/mysql，不出现「项目连接」按钮', async () => {
+    const c = await mountRepair(undefined);
+    const btns = [...c.querySelectorAll('button')].map((b) => b.textContent || '');
+    expect(btns).not.toContain('项目连接');
+    expect(inputs(c).some((i) => i.value === '127.0.0.1')).toBe(true);
+    document.body.removeChild(c);
+  });
+
+  it('点「项目连接」把手改回的值还原为 preset', async () => {
+    const preset = { client: 'sqlserver', host: 'prod.example.cn', port: 1433, user: 'sa', database: 'ERP_DB' };
+    const c = await mountRepair(preset);
+    const hostInput = inputs(c).find((i) => i.placeholder === 'host') as HTMLInputElement;
+    hostInput.value = '10.99.0.1';
+    hostInput.dispatchEvent(new Event('input'));
+    await flush();
+    [...c.querySelectorAll('button')].find((b) => (b.textContent || '') === '项目连接')!.click();
+    await flush();
+    expect((inputs(c).find((i) => i.placeholder === 'host') as HTMLInputElement).value).toBe('prod.example.cn');
+    document.body.removeChild(c);
+  });
+});

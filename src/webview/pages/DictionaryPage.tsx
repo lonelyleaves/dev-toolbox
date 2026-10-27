@@ -679,7 +679,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
 
       {tab === 'edit' && table && <EditTable dict={dict} setDict={setDict} table={table} onRename={(newName) => setSelected(newName)} />}
       {tab === 'lint' && <LintPanel dict={dict} setDict={setDict} naming={naming} />}
-      {tab === 'repair' && <RepairPanel dict={dict} setDict={setDict} dbSnap={dbSnap} setDbSnap={setDbSnap} />}
+      {tab === 'repair' && <RepairPanel dict={dict} setDict={setDict} dbSnap={dbSnap} setDbSnap={setDbSnap} preset={projectConfig.connections?.db} projectId={currentId} />}
       {tab === 'xdiff' && (
         <CrossProjectDiffPanel
           projects={projects}
@@ -972,11 +972,21 @@ function LintPanel({ dict, setDict, naming: initialRules }: { dict: DictionaryMo
 }
 
 // ---------- 比对修复 ----------
-function RepairPanel({ dict, setDict, dbSnap, setDbSnap }: {
+export function RepairPanel({ dict, setDict, dbSnap, setDbSnap, preset, projectId }: {
   dict: DictionaryModel; setDict: (d: DictionaryModel) => void;
   dbSnap: DictionaryModel | null; setDbSnap: (d: DictionaryModel | null) => void;
+  preset?: ProjectConfig['connections']['db']; projectId?: string | null;
 }) {
-  const [info, setInfo] = useState<DbConnInfo>({ client: 'mysql', host: '127.0.0.1', port: 3306, user: 'root', password: '', database: '' });
+  // 初值来自「连接配置」页签的本项目 DB 连接（与 导入 页签同一套 preset）；
+  // 密码不回显——留空则按 projectId 走该项目凭据库，手动填了则拉取成功后回存
+  const [info, setInfo] = useState<DbConnInfo>({
+    client: preset?.client || 'mysql',
+    host: preset?.host || '127.0.0.1',
+    port: preset?.port || 3306,
+    user: preset?.user || 'root',
+    password: '',
+    database: preset?.database || '',
+  });
   const [includeDangerous, setIncludeDangerous] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -984,9 +994,18 @@ function RepairPanel({ dict, setDict, dbSnap, setDbSnap }: {
   const items: DiffItem[] = useMemo(() => (dbSnap ? diffDictionaries(dbSnap, dict) : []), [dbSnap, dict]);
   const fixSql = useMemo(() => (dbSnap ? generateFixSql(dbSnap, dict, includeDangerous) : []), [dbSnap, dict, includeDangerous]);
 
+  const applyPreset = () => {
+    if (!preset) return;
+    setInfo({ client: preset.client || 'mysql', host: preset.host || '127.0.0.1', port: preset.port || 3306, user: preset.user || 'root', password: '', database: preset.database || '' });
+  };
+
   const pull = async () => {
     setBusy(true); setErr('');
-    try { setDbSnap(await host.dbIntrospect(info)); } catch (e: any) { setErr(String(e?.message || e)); }
+    try {
+      const conn = { ...info, projectId: projectId ?? undefined };
+      setDbSnap(await host.dbIntrospect(conn));
+      if (info.password) await host.dbSavePassword({ ...conn, secretKey: undefined }, info.password);
+    } catch (e: any) { setErr(String(e?.message || e)); }
     setBusy(false);
   };
 
@@ -1000,6 +1019,7 @@ function RepairPanel({ dict, setDict, dbSnap, setDbSnap }: {
           <input type="text" style="width:80px" placeholder="user" value={info.user} onInput={(e) => setInfo({ ...info, user: (e.target as HTMLInputElement).value })} />
           <input type="password" style="width:100px" placeholder="password" value={info.password} onInput={(e) => setInfo({ ...info, password: (e.target as HTMLInputElement).value })} />
           <input type="text" style="width:120px" placeholder={DB_PLACEHOLDER[info.client]} value={info.database} onInput={(e) => setInfo({ ...info, database: (e.target as HTMLInputElement).value })} />
+          {preset && <Btn onClick={applyPreset} title="手动改过？一键还原为「连接配置」页签里的本项目 DB 连接（密码走项目凭据库）">项目连接</Btn>}
           <Btn primary onClick={pull} disabled={busy || !info.database}>{busy ? '拉取中…' : '拉取库结构'}</Btn>
         </div>
         {err && <div class="error-text">{err}</div>}
