@@ -17,6 +17,8 @@ export interface DictSource {
   name: string;               // 显示名：文件名 / 库名 / 账套名
   path?: string;              // 文件类来源的完整路径（用于自动重解析）
   conn?: string;              // 非文件类来源的连接标识（库名/账套，不含凭据）
+  configId?: string;          // db/kingdee 来源：属于项目里的哪一条连接配置（多配置溯源）
+  configName?: string;        // 配置显示名（来源列表展示用）
   importedAt: string;
   parserVersion?: number;
   tableCount: number;

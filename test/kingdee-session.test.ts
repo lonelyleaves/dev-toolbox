@@ -50,7 +50,7 @@ describe('金蝶登录无会话 Cookie 的警告与数据链路', () => {
 
   it('拉取数据：无 Cookie 也发得出请求；Cookie 存在时元数据请求头里带 Cookie', async () => {
     mockLoginResponse({ setCookie: ['kdservice-sessionid=abc123; Path=/; HttpOnly'] });
-    const r = await kingdeeFetchMetadata(['BD_MATERIAL'], { projectId: 'p1' }, undefined as any, (() => ({ connections: { kingdee: pc } })) as any);
+    const r = await kingdeeFetchMetadata(['BD_MATERIAL'], { projectId: 'p1' }, undefined as any, (() => ({ connections: { kingdee: [pc] } })) as any);
     expect(r.ok).toBe(true);
     expect(r.text).toContain('BD_MATERIAL');
     // 找到发往元数据接口的那次请求，验证带上了 Cookie
@@ -61,7 +61,7 @@ describe('金蝶登录无会话 Cookie 的警告与数据链路', () => {
     // 再测无 Cookie 场景：元数据请求头不带 Cookie，但请求照样发出并解析
     mockLoginResponse({});
     (httpMod.doHttpRequest as any).mockClear();
-    const r2 = await kingdeeFetchMetadata(['BD_MATERIAL'], { projectId: 'p1' }, undefined as any, (() => ({ connections: { kingdee: pc } })) as any);
+    const r2 = await kingdeeFetchMetadata(['BD_MATERIAL'], { projectId: 'p1' }, undefined as any, (() => ({ connections: { kingdee: [pc] } })) as any);
     expect(r2.ok).toBe(true);
     const calls2 = (httpMod.doHttpRequest as any).mock.calls;
     const metaCall2 = calls2.find((c: any[]) => !String(c[0].url).includes('ValidateUser'));
@@ -83,7 +83,7 @@ describe('金蝶登录无会话 Cookie 的警告与数据链路', () => {
       }
       return { status: 401, bodyText: 'unauthorized', headers: {} };
     });
-    const r = await kingdeeFetchMetadata(['BD_MATERIAL'], { projectId: 'p1' }, undefined as any, (() => ({ connections: { kingdee: pc } })) as any);
+    const r = await kingdeeFetchMetadata(['BD_MATERIAL'], { projectId: 'p1' }, undefined as any, (() => ({ connections: { kingdee: [pc] } })) as any);
     expect(r.ok).toBe(false);
     expect(r.error).toContain('鉴权被拒（HTTP 401）');
     expect(r.error).toContain('附加请求头');

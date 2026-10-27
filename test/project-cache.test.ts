@@ -69,12 +69,20 @@ describe('项目拉取结果缓存', () => {
   });
 
   it('改了连接配置 → configHash 变化（缓存应判定过期）', () => {
-    const a: ProjectConfig = { connections: { db: { client: 'mysql', host: '10.0.0.5', database: 'erp' } } };
-    const b: ProjectConfig = { connections: { db: { client: 'mysql', host: '10.0.0.9', database: 'erp' } } };
+    const a: ProjectConfig = { connections: { db: [{ id: 'default', name: 'd', client: 'mysql', host: '10.0.0.5', database: 'erp' }] } };
+    const b: ProjectConfig = { connections: { db: [{ id: 'default', name: 'd', client: 'mysql', host: '10.0.0.9', database: 'erp' }] } };
 
     expect(configHashOf(a, 'db')).toBeTruthy();
     expect(configHashOf(a, 'db')).toBe(configHashOf(a, 'db'));
     expect(configHashOf(a, 'db')).not.toBe(configHashOf(b, 'db'));
+  });
+
+  it('多配置：不同 configId 的指纹不同', () => {
+    const cfg: ProjectConfig = { connections: { db: [
+      { id: 'd1', name: 'a', client: 'mysql', host: 'h1', database: 'x' },
+      { id: 'd2', name: 'b', client: 'mysql', host: 'h2', database: 'y' },
+    ] } };
+    expect(configHashOf(cfg, 'db', 'd1')).not.toBe(configHashOf(cfg, 'db', 'd2'));
   });
 
   it('凭据不该出现在缓存文件里（防止换机器时泄露）', () => {
@@ -132,11 +140,11 @@ describe('项目连接配置与凭据隔离', () => {
       const store = new ProjectStore({ fsPath: dir } as any);
       const a = store.create('客户A');
       const b = store.create('客户B');
-      store.saveConfig(a.id, { connections: { db: { client: 'mysql', host: 'a-host', database: 'a-db' } } });
-      store.saveConfig(b.id, { connections: { db: { client: 'mssql', host: 'b-host', database: 'b-db' } } });
+      store.saveConfig(a.id, { connections: { db: [{ id: 'default', name: 'd', client: 'mysql', host: 'a-host', database: 'a-db' }] } });
+      store.saveConfig(b.id, { connections: { db: [{ id: 'default', name: 'd', client: 'mssql', host: 'b-host', database: 'b-db' }] } });
 
-      expect(store.loadConfig(a.id).connections.db?.host).toBe('a-host');
-      expect(store.loadConfig(b.id).connections.db?.host).toBe('b-host');
+      expect(store.loadConfig(a.id).connections.db?.[0]?.host).toBe('a-host');
+      expect(store.loadConfig(b.id).connections.db?.[0]?.host).toBe('b-host');
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

@@ -1,5 +1,5 @@
 import { h } from 'preact';
-import { useState, useMemo } from 'preact/hooks';
+import { useState, useMemo, useEffect } from 'preact/hooks';
 import { Btn, Section } from '../../components';
 import { ProjectMeta, ProjectConfig } from '../../../core/messaging';
 import { host } from '../../bridge';
@@ -97,19 +97,20 @@ export function SourcesPanel(p: {
   onRefresh: (id: string) => void;
   onAdd: () => void;
   onSync: (id: string, kind: 'db' | 'kingdee') => void;
-  cacheMeta?: Record<string, { importedAt?: string; stale?: boolean; tableCount?: number; configHash?: string }>;
-  hash?: { db?: string; kingdee?: string };
+  cacheMeta?: Record<string, { importedAt?: string; stale?: boolean; tableCount?: number; configHash?: string; configId?: string; configName?: string }>;
+  hash?: Record<string, string>;
 }) {
   const sources = p.dict.sources || [];
 
-  /** 判断该来源的缓存是否已过期（连接配置指纹变了） */
-  const staleNow = (id: string, kind: string) => {
-    const m = (p.cacheMeta || {})[kind];
+  /** 判断该来源的缓存是否已过期（对应配置的连接指纹变了）；按 kind__configId 槽位取 */
+  const staleNow = (s: any) => {
+    const slot = !s.configId || s.configId === 'default' ? s.kind : `${s.kind}__${s.configId}`;
+    const m = (p.cacheMeta || {})[slot];
     if (!m) return false;
     // 宿主已算好 stale 就以它为准（它同时握着缓存指纹与当前指纹，最准）；
     // 拿不到时再退回前端自己比对，避免字段缺失导致提示永远不亮
     if (typeof m.stale === 'boolean') return m.stale;
-    const now = (p.hash || {})[kind as 'db' | 'kingdee'];
+    const now = (p.hash || {})[slot];
     return !!m.configHash && !!now && m.configHash !== now;
   };
   if (sources.length === 0) {
@@ -137,7 +138,7 @@ export function SourcesPanel(p: {
                       onClick={(e) => { e.preventDefault(); p.onSync(s.id, s.kind as 'db' | 'kingdee'); }}
                       title="用本项目的连接重新拉取并对比差异，由你确认是否覆盖"
                     >
-                      同步{staleNow(s.id, s.kind) ? ' · 连接已变更' : ''}
+                      同步{staleNow(s) ? ' · 连接已变更' : ''}
                     </a>
                   )}
                   {' '}
@@ -160,7 +161,7 @@ export function SourcesPanel(p: {
 /* ---------------- 金蝶云星空接入 ---------------- */
 
 /** 金蝶 WebAPI 直连表单（「扩展字段」页签与「比对修复」页签共用） */
-export function KingdeeWebApiForm(p: { projectId?: string | null; onFetched: (dict: DictionaryModel, label: string, raw: string) => void }) {
+export function KingdeeWebApiForm(p: { projectId?: string | null; configId?: string; onFetched: (dict: DictionaryModel, label: string, raw: string) => void }) {
   const [formIds, setFormIds] = useState('');
   const [secret, setSecret] = useState('');
   const [pwd, setPwd] = useState('');
@@ -173,8 +174,8 @@ export function KingdeeWebApiForm(p: { projectId?: string | null; onFetched: (di
     setBusy(true);
     setMsg('正在登录并拉取元数据…');
     try {
-      if (secret || pwd) await host.kingdeeSaveSecret(secret || undefined, pwd || undefined, p.projectId ?? undefined);
-      const r = await host.kingdeeFetchMetadata(ids, { projectId: p.projectId ?? undefined, appSecret: secret || undefined, password: pwd || undefined });
+      if (secret || pwd) await host.kingdeeSaveSecret(secret || undefined, pwd || undefined, p.projectId ?? undefined, p.configId);
+      const r = await host.kingdeeFetchMetadata(ids, { projectId: p.projectId ?? undefined, configId: p.configId, appSecret: secret || undefined, password: pwd || undefined });
       if (!r.ok) { setMsg(`✗ ${r.error}`); return; }
       const d = parseKingdeeMetadata(r.text || '', '金蝶 ' + ids.join(','));
       if (!d.tables.length) {
@@ -201,15 +202,17 @@ export function KingdeeWebApiForm(p: { projectId?: string | null; onFetched: (di
   );
 }
 
-export function KingdeePanel(p: { projectId?: string | null; onImport: (dict: any, name: string) => void }) {
+export function KingdeePanel(p: { projectId?: string | null; configs?: import('../../../core/messaging').NamedKingdeeConfig[]; onImport: (dict: any, name: string, configId?: string) => void }) {
   const [raw, setRaw] = useState('');
   const [msg, setMsg] = useState('');
+  const [cfgId, setCfgId] = useState(p.configs?.[0]?.id || '');
+  const activeCfg = () => cfgId || p.configs?.[0]?.id;
 
   const doParse = () => {
     if (!raw.trim()) { setMsg('请先粘贴金蝶元数据或 WebAPI 返回报文'); return; }
     const d = parseKingdeeMetadata(raw, '金蝶元数据');
     if (!d.tables.length) { setMsg(`✗ ${d.importErrors[0]?.message || '未识别到表单/字段'}`); return; }
-    p.onImport(d, '金蝶元数据');
+    p.onImport(d, '金蝶元数据', activeCfg());
     setMsg(`✓ 解析出 ${d.tables.length} 张表，已按合并规则并入`);
   };
 
@@ -232,13 +235,22 @@ export function KingdeePanel(p: { projectId?: string | null; onImport: (dict: an
 
       <Section title="金蝶云星空 · 方式二：WebAPI 直连">
         <div class="small muted" style="margin-bottom:6px">
-          接口地址、账套、应用 Id 在设置里配置（devToolbox.kingdee.*）；appSecret 与密码只存 VS Code 凭据库，不进项目文件。
+          接口地址、账套、应用 Id 在「连接配置」页签配置（可配多条）；appSecret 与密码只存 VS Code 凭据库，不进项目文件。
         </div>
+        {(p.configs || []).length > 1 && (
+          <div class="row" style="margin-bottom:6px;gap:8px">
+            <span class="small muted">金蝶配置：</span>
+            <select value={cfgId} onInput={(e) => setCfgId((e.target as HTMLSelectElement).value)}>
+              {(p.configs || []).map((c) => <option value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+        )}
         <KingdeeWebApiForm
           projectId={p.projectId}
+          configId={cfgId || p.configs?.[0]?.id}
           onFetched={(d, label, rawText) => {
             setRaw(rawText);
-            p.onImport(d, label);
+            p.onImport(d, label, activeCfg());
             setMsg(`✓ 拉取并解析出 ${d.tables.length} 张表，报文已放进上方文本框，可再手动调整`);
           }}
         />
@@ -326,38 +338,88 @@ function Field(p: { label: string; children: any; hint?: string }) {
  */
 export function ProjectConfigPanel(p: {
   projectName: string;
+  projectId?: string | null;
   config: import('../../../core/messaging').ProjectConfig;
-  savedSecretKeys: string[];
-  /** 数据库凭据已保存的键名（与金蝶分开查，否则 db 那一栏永远显示"未保存"） */
-  savedDbKeys?: string[];
   /** 测试连接：返回可直接展示的结果文案 */
-  onTest: (kind: 'db' | 'kingdee', cfg: ProjectConfig, secrets: any) => Promise<string>;
+  onTest: (kind: 'db' | 'kingdee', cfg: import('../../../core/messaging').ProjectConfig, secrets: any, configId?: string) => Promise<string>;
   /** 全局 devToolbox.* 设置的值，仅用于"填充"按钮，运行时不参与取连接 */
   defaults?: { kingdee?: import('../../../core/messaging').KingdeeConnectionConfig };
-  onSave: (cfg: import('../../../core/messaging').ProjectConfig, secrets: { dbPassword?: string; appSecret?: string; password?: string }) => Promise<void> | void;
+  onSave: (cfg: import('../../../core/messaging').ProjectConfig, secrets: { dbPassword?: string; appSecret?: string; password?: string; dbConfigId?: string; kdConfigId?: string }) => Promise<void> | void;
 }) {
-  const [db, setDb] = useState<any>(p.config.connections?.db ?? {});
-  const [kd, setKd] = useState<any>(p.config.connections?.kingdee ?? {});
+  const newConfigId = () => `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const [dbs, setDbs] = useState<any[]>((p.config.connections?.db || []).map((d: any) => ({ ...d })));
+  const [kds, setKds] = useState<any[]>((p.config.connections?.kingdee || []).map((k: any) => ({ ...k })));
+  const [selDb, setSelDb] = useState<string>(dbs[0]?.id ?? '');
+  const [selKd, setSelKd] = useState<string>(kds[0]?.id ?? '');
   const [dbPwd, setDbPwd] = useState('');
   const [appSecret, setAppSecret] = useState('');
   const [pwd, setPwd] = useState('');
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const hasDbSecret = (p.savedDbKeys ?? []).includes('password');
-  const hasAppSecret = p.savedSecretKeys.includes('appSecret');
+  // 每条配置的凭据存在性（按 kind:configId 缓存，切项目重挂面板时重查）
+  const [secMap, setSecMap] = useState<Record<string, string[]>>({});
+  useEffect(() => {
+    if (!p.projectId) return;
+    let alive = true;
+    (async () => {
+      const m: Record<string, string[]> = {};
+      for (const d of dbs) { try { m['db:' + d.id] = await host.projectReadSecretExists(p.projectId!, 'db', d.id); } catch { m['db:' + d.id] = []; } }
+      for (const k of kds) { try { m['kingdee:' + k.id] = await host.projectReadSecretExists(p.projectId!, 'kingdee', k.id); } catch { m['kingdee:' + k.id] = []; } }
+      if (alive) setSecMap(m);
+    })();
+    return () => { alive = false; };
+  }, [p.projectId]);
+
+  const db = dbs.find((x) => x.id === selDb) || dbs[0] || {};
+  const kd = kds.find((x) => x.id === selKd) || kds[0] || {};
+  const hasDbSecret = (secMap['db:' + db.id] ?? []).includes('password');
+  const hasAppSecret = (secMap['kingdee:' + kd.id] ?? []).includes('appSecret');
 
   const [testMsg, setTestMsg] = useState('');
   const [testOk, setTestOk] = useState<boolean | null>(null);
   const [testing, setTesting] = useState<'db' | 'kingdee' | ''>('');
   const [showAdvanced, setShowAdvanced] = useState(false);
 
+  const setList = (setter: any, list: any[], id: string, patch: any) => setter(list.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+  const onDbField = (k: string, v: any) => setList(setDbs, dbs, db.id, { [k]: v });
+  const onKdField = (k: string, v: any) => setList(setKds, kds, kd.id, { [k]: v });
+
+  const addDb = () => { const id = newConfigId(); setDbs([...dbs, { id, name: `数据库 ${dbs.length + 1}`, client: 'mysql', port: 3306 }]); setSelDb(id); };
+  const delDb = (id: string) => { const next = dbs.filter((x) => x.id !== id); setDbs(next); if (selDb === id) setSelDb(next[0]?.id ?? ''); };
+  const renameDb = (id: string) => { const cur = dbs.find((x) => x.id === id); const n = prompt('重命名数据库配置', cur?.name || ''); if (n && n.trim()) setList(setDbs, dbs, id, { name: n.trim() }); };
+
+  const DEFAULT_PORTS: Record<string, number> = { mysql: 3306, postgres: 5432, mssql: 1433, oracle: 1521 };
+  const onClientChange = (v: string) => {
+    const prev = DEFAULT_PORTS[db.client]; const cur = Number(db.port);
+    const patch: any = { client: v };
+    if (!cur || (prev && cur === prev)) patch.port = DEFAULT_PORTS[v];
+    onDbField('client', v); if (patch.port) setList(setDbs, dbs, db.id, { client: v, port: patch.port });
+  };
+
+  const addKd = () => { const id = newConfigId(); setKds([...kds, { id, name: `金蝶 ${kds.length + 1}`, argStyle: 'named', lcid: 2052 }]); setSelKd(id); };
+  const delKd = (id: string) => { const next = kds.filter((x) => x.id !== id); setKds(next); if (selKd === id) setSelKd(next[0]?.id ?? ''); };
+  const renameKd = (id: string) => { const cur = kds.find((x) => x.id === id); const n = prompt('重命名金蝶配置', cur?.name || ''); if (n && n.trim()) setList(setKds, kds, id, { name: n.trim() }); };
+
+  const buildConfig = (): import('../../../core/messaging').ProjectConfig => ({
+    connections: {
+      db: dbs.map((d) => ({ id: d.id, name: d.name, client: d.client, host: d.host, port: Number(d.port) || undefined, user: d.user, database: d.database })),
+      kingdee: kds.map((k) => ({ id: k.id, name: k.name, baseUrl: k.baseUrl, dbId: k.dbId, appId: k.appId, user: k.user, lcid: Number(k.lcid) || undefined, loginPath: k.loginPath, metadataPath: k.metadataPath, argStyle: k.argStyle, extraHeaders: k.extraHeaders })),
+    },
+  });
+
   const runTest = async (kind: 'db' | 'kingdee') => {
     setTesting(kind); setTestMsg(kind === 'db' ? '正在连接数据库…' : '正在登录金蝶并校验接口…'); setTestOk(null);
     try {
-      const out = await p.onTest(kind, { connections: { db, kingdee: kd } }, { dbPassword: dbPwd || undefined, appSecret: appSecret || undefined, password: pwd || undefined });
+      const cfgId = kind === 'db' ? db.id : kd.id;
+      const out = await p.onTest(kind, buildConfig(), { dbPassword: dbPwd || undefined, appSecret: appSecret || undefined, password: pwd || undefined }, cfgId);
       setTestOk(!/^✗/.test(out));
       setTestMsg((kind === 'db' ? '[SQL] ' : '[金蝶] ') + out);
+      if (p.projectId) {
+        const keys = await host.projectReadSecretExists(p.projectId, kind, cfgId).catch(() => [] as string[]);
+        setSecMap({ ...secMap, [`${kind}:${cfgId}`]: keys });
+      }
+      setDbPwd(''); setAppSecret(''); setPwd('');
     } catch (e: any) {
       setTestOk(false);
       setTestMsg(`✗ ${e?.message || e}`);
@@ -365,128 +427,138 @@ export function ProjectConfigPanel(p: {
     setTesting('');
   };
 
-  /** 切换数据库类型时自动带默认端口（避免选了 SQL Server 还留着 3306） */
-  const DEFAULT_PORTS: Record<string, number> = { mysql: 3306, postgres: 5432, mssql: 1433, oracle: 1521 };
-  const onClientChange = (v: string) => {
-    const prev = DEFAULT_PORTS[db.client];
-    const cur = Number(db.port);
-    const next = { ...db, client: v };
-    // 只在"没填端口"或"端口还是上一个类型的默认值"时才覆盖，手工改过的端口不动
-    if (!cur || (prev && cur === prev)) next.port = DEFAULT_PORTS[v];
-    setDb(next);
-  };
-
   const restoreDefaultPaths = () => {
-    setKd({ ...kd, loginPath: '', metadataPath: '' });
+    onKdField('loginPath', ''); onKdField('metadataPath', '');
     setTestMsg('已清空登录/元数据路径，保存后将使用官方默认接口');
     setTestOk(true);
   };
-  const set = (obj: any, k: string, v: any) => ({ ...obj, [k]: v });
 
-  /** 把旧版全局设置一次性带进本项目（严格模式下运行时仍只读项目配置） */
+  /** 把旧版全局设置一次性带进当前金蝶配置（严格模式下运行时仍只读项目配置） */
   const fillFromGlobal = () => {
     const g = p.defaults?.kingdee;
     if (!g || Object.keys(g).length === 0) { setMsg('全局设置里没有金蝶配置可填充'); return; }
-    setKd({ ...kd, ...JSON.parse(JSON.stringify(g)) });
-    setMsg('已从全局设置填充，确认无误后点保存（之后以项目配置为准）');
+    setKds(kds.map((x) => (x.id === kd.id ? { ...x, ...JSON.parse(JSON.stringify(g)), id: x.id, name: x.name } : x)));
+    setMsg('已从全局设置填充到当前金蝶配置，确认无误后点保存');
   };
 
   const save = async () => {
     setBusy(true); setMsg('');
     try {
-      await p.onSave(
-        {
-          connections: {
-            db: { client: db.client, host: db.host, port: Number(db.port) || undefined, user: db.user, database: db.database },
-            kingdee: { baseUrl: kd.baseUrl, dbId: kd.dbId, appId: kd.appId, user: kd.user, lcid: Number(kd.lcid) || undefined, loginPath: kd.loginPath, metadataPath: kd.metadataPath, argStyle: kd.argStyle, extraHeaders: kd.extraHeaders },
-          },
-        },
-        { dbPassword: dbPwd || undefined, appSecret: appSecret || undefined, password: pwd || undefined },
-      );
+      await p.onSave(buildConfig(), { dbPassword: dbPwd || undefined, appSecret: appSecret || undefined, password: pwd || undefined, dbConfigId: db.id, kdConfigId: kd.id });
       setDbPwd(''); setAppSecret(''); setPwd('');
       setMsg('✓ 已保存到本项目（连接信息随项目走，切换项目自动切换）');
     } catch (e: any) { setMsg(`✗ ${e?.message || e}`); }
     setBusy(false);
   };
 
+
   return (
     <div>
       <Section title={`项目「${p.projectName}」的连接配置`}>
         <div class="small muted" style="margin-bottom:8px">
-          连接信息保存在项目目录 config.json，密码/appSecret 存 VS Code 凭据库且<b>按项目隔离</b>；
+          一个项目可配<b>多条数据库 / 多条金蝶</b>连接；连接信息存项目目录 config.json，密码/appSecret 存凭据库且<b>按项目+配置隔离</b>；
           导出项目包会带走连接配置但<b>不带密码</b>。没配连接的项目只能用离线方式（PDM / SQL / JSON / 粘贴报文）维护字典。
         </div>
 
-        <div style="font-weight:600; margin:10px 0 6px">数据库连接</div>
-        <Field label="类型">
-          <select value={db.client ?? ''} onInput={(e: any) => onClientChange(e.target.value)}>
-            <option value="">（未选择）</option>
-            {Object.entries(DB_LABEL).map(([k, v]) => <option value={k}>{v}</option>)}
-          </select>
-        </Field>
-        <Field label="主机 / 端口">
-          <input type="text" style="width:150px" placeholder="127.0.0.1" value={db.host ?? ''} onInput={(e: any) => setDb(set(db, 'host', e.target.value))} />
-          <input type="number" style="width:80px" placeholder={String(DEFAULT_PORTS[db.client] ?? 3306)} value={db.port ?? ''} onInput={(e: any) => setDb(set(db, 'port', e.target.value))} />
-        </Field>
-        <Field label="用户名 / 库名">
-          <input type="text" style="width:120px" placeholder="user" value={db.user ?? ''} onInput={(e: any) => setDb(set(db, 'user', e.target.value))} />
-          <input type="text" style="width:130px" placeholder="database" value={db.database ?? ''} onInput={(e: any) => setDb(set(db, 'database', e.target.value))} />
-        </Field>
-        <Field label="密码" hint={hasDbSecret ? '已保存（留空则不修改）' : '未保存'}>
-          <input type="password" style="width:150px" placeholder={hasDbSecret ? '••••••（留空=不修改）' : 'password'} value={dbPwd} onInput={(e: any) => setDbPwd(e.target.value)} />
-        </Field>
-
-        <div style="font-weight:600; margin:14px 0 6px">金蝶云星空连接</div>
-        <Field label="站点地址">
-          <input type="text" style="width:260px" placeholder="http://server/k3cloud" value={kd.baseUrl ?? ''} onInput={(e: any) => setKd(set(kd, 'baseUrl', e.target.value))} />
-        </Field>
-        <Field label="数据中心ID / AppId">
-          <input type="text" style="width:140px" placeholder="acctID / dbId" value={kd.dbId ?? ''} onInput={(e: any) => setKd(set(kd, 'dbId', e.target.value))} />
-          <input type="text" style="width:140px" placeholder="appId（可选）" value={kd.appId ?? ''} onInput={(e: any) => setKd(set(kd, 'appId', e.target.value))} />
-        </Field>
-        <Field label="登录用户 / lcid">
-          <input type="text" style="width:140px" placeholder="用户名" value={kd.user ?? ''} onInput={(e: any) => setKd(set(kd, 'user', e.target.value))} />
-          <input type="number" style="width:80px" placeholder="2052" value={kd.lcid ?? ''} onInput={(e: any) => setKd(set(kd, 'lcid', e.target.value))} />
-        </Field>
-        <Field label="appSecret" hint={hasAppSecret ? '已保存（留空则不修改）' : '未保存'}>
-          <input type="password" style="width:150px" placeholder={hasAppSecret ? '••••••（留空=不修改）' : 'appSecret'} value={appSecret} onInput={(e: any) => setAppSecret(e.target.value)} />
-        </Field>
-        <Field label="登录密码" hint="WebAPI 直连登录用">
-          <input type="password" style="width:150px" placeholder="登录密码" value={pwd} onInput={(e: any) => setPwd(e.target.value)} />
-        </Field>
-        <Field label="参数风格">
-          <select value={kd.argStyle ?? 'named'} onInput={(e: any) => setKd(set(kd, 'argStyle', e.target.value))}>
-            <option value="named">named（官方 FormId 对象）</option>
-            <option value="parameters">parameters（数组）</option>
-          </select>
-        </Field>
-
-        <div style="margin-top:8px">
-          <a class="link small" href="#" onClick={(e) => { e.preventDefault(); setShowAdvanced(!showAdvanced); }}>
-            {showAdvanced ? '收起高级参数 ▴' : '高级参数（接口路径 / 附加请求头）▾'}
-          </a>
+        <div class="row" style="justify-content:space-between; align-items:center; margin:10px 0 6px">
+          <span style="font-weight:600">数据库连接（{dbs.length}）</span>
+          <Btn onClick={addDb}>+ 新增数据库</Btn>
         </div>
-        {showAdvanced && (
-          <div class="col" style="margin-top:6px; padding-left:4px; border-left:2px solid var(--vscode-panel-border)">
-            <Field label="登录接口路径" hint="留空用官方 AuthService.ValidateUser">
-              <input type="text" style="width:100%" placeholder="Kingdee.BOS.WebApi.ServicesStub.AuthService.ValidateUser.common.kdsvc" value={kd.loginPath ?? ''} onInput={(e: any) => setKd(set(kd, 'loginPath', e.target.value))} />
+        {dbs.length === 0 && <div class="small muted" style="margin-bottom:8px">暂无数据库配置，点右上「+ 新增数据库」。</div>}
+        {dbs.length > 0 && (
+          <div>
+            <div class="row" style="flex-wrap:wrap; gap:6px; margin-bottom:8px">
+              {dbs.map((d) => (
+                <span key={d.id} class={`badge${d.id === db.id ? ' info' : ''}`} style="cursor:pointer" onClick={() => setSelDb(d.id)} title={d.name}>{d.name || '未命名'}</span>
+              ))}
+              <a class="link small" href="#" onClick={(e) => { e.preventDefault(); renameDb(db.id); }}>重命名</a>
+              <a class="link small" href="#" onClick={(e) => { e.preventDefault(); if (confirm(`删除数据库配置「${db.name}」？`)) delDb(db.id); }}>删除</a>
+            </div>
+            <Field label="类型">
+              <select value={db.client ?? ''} onInput={(e: any) => onClientChange(e.target.value)}>
+                <option value="">（未选择）</option>
+                {Object.entries(DB_LABEL).map(([k, v]) => <option value={k}>{v}</option>)}
+              </select>
             </Field>
-            <Field label="元数据接口路径" hint="留空用官方 QueryBusinessInfo">
-              <input type="text" style="width:100%" placeholder="Kingdee.BOS.WebApi.ServicesStub.DynamicFormService.QueryBusinessInfo.common.kdsvc" value={kd.metadataPath ?? ''} onInput={(e: any) => setKd(set(kd, 'metadataPath', e.target.value))} />
+            <Field label="主机 / 端口">
+              <input type="text" style="width:150px" placeholder="127.0.0.1" value={db.host ?? ''} onInput={(e: any) => onDbField('host', e.target.value)} />
+              <input type="number" style="width:80px" placeholder={String(DEFAULT_PORTS[db.client] ?? 3306)} value={db.port ?? ''} onInput={(e: any) => onDbField('port', e.target.value)} />
             </Field>
-            <Field label="附加请求头" hint='JSON，如 {"Key":"xxx"}'>
-              <input type="text" style="width:100%" placeholder='{"Key":"xxx"}' value={kd.extraHeaders ?? ''} onInput={(e: any) => setKd(set(kd, 'extraHeaders', e.target.value))} />
+            <Field label="用户名 / 库名">
+              <input type="text" style="width:120px" placeholder="user" value={db.user ?? ''} onInput={(e: any) => onDbField('user', e.target.value)} />
+              <input type="text" style="width:130px" placeholder="database" value={db.database ?? ''} onInput={(e: any) => onDbField('database', e.target.value)} />
             </Field>
-            <Btn onClick={restoreDefaultPaths}>恢复默认接口路径</Btn>
+            <Field label="密码" hint={hasDbSecret ? '已保存（留空则不修改）' : '未保存'}>
+              <input type="password" style="width:150px" placeholder={hasDbSecret ? '••••••（留空=不修改）' : 'password'} value={dbPwd} onInput={(e: any) => setDbPwd(e.target.value)} />
+            </Field>
+          </div>
+        )}
+
+        <div class="row" style="justify-content:space-between; align-items:center; margin:14px 0 6px">
+          <span style="font-weight:600">金蝶云星空连接（{kds.length}）</span>
+          <Btn onClick={addKd}>+ 新增金蝶</Btn>
+        </div>
+        {kds.length === 0 && <div class="small muted" style="margin-bottom:8px">暂无金蝶配置，点右上「+ 新增金蝶」。</div>}
+        {kds.length > 0 && (
+          <div>
+            <div class="row" style="flex-wrap:wrap; gap:6px; margin-bottom:8px">
+              {kds.map((k) => (
+                <span key={k.id} class={`badge${k.id === kd.id ? ' info' : ''}`} style="cursor:pointer" onClick={() => setSelKd(k.id)} title={k.name}>{k.name || '未命名'}</span>
+              ))}
+              <a class="link small" href="#" onClick={(e) => { e.preventDefault(); renameKd(kd.id); }}>重命名</a>
+              <a class="link small" href="#" onClick={(e) => { e.preventDefault(); if (confirm(`删除金蝶配置「${kd.name}」？`)) delKd(kd.id); }}>删除</a>
+            </div>
+            <Field label="站点地址">
+              <input type="text" style="width:260px" placeholder="http://server/k3cloud" value={kd.baseUrl ?? ''} onInput={(e: any) => onKdField('baseUrl', e.target.value)} />
+            </Field>
+            <Field label="数据中心ID / AppId">
+              <input type="text" style="width:140px" placeholder="acctID / dbId" value={kd.dbId ?? ''} onInput={(e: any) => onKdField('dbId', e.target.value)} />
+              <input type="text" style="width:140px" placeholder="appId（可选）" value={kd.appId ?? ''} onInput={(e: any) => onKdField('appId', e.target.value)} />
+            </Field>
+            <Field label="登录用户 / lcid">
+              <input type="text" style="width:140px" placeholder="用户名" value={kd.user ?? ''} onInput={(e: any) => onKdField('user', e.target.value)} />
+              <input type="number" style="width:80px" placeholder="2052" value={kd.lcid ?? ''} onInput={(e: any) => onKdField('lcid', e.target.value)} />
+            </Field>
+            <Field label="appSecret" hint={hasAppSecret ? '已保存（留空则不修改）' : '未保存'}>
+              <input type="password" style="width:150px" placeholder={hasAppSecret ? '••••••（留空=不修改）' : 'appSecret'} value={appSecret} onInput={(e: any) => setAppSecret(e.target.value)} />
+            </Field>
+            <Field label="登录密码" hint="WebAPI 直连登录用">
+              <input type="password" style="width:150px" placeholder="登录密码" value={pwd} onInput={(e: any) => setPwd(e.target.value)} />
+            </Field>
+            <Field label="参数风格">
+              <select value={kd.argStyle ?? 'named'} onInput={(e: any) => onKdField('argStyle', e.target.value)}>
+                <option value="named">named（官方 FormId 对象）</option>
+                <option value="parameters">parameters（数组）</option>
+              </select>
+            </Field>
+            <div style="margin-top:8px">
+              <a class="link small" href="#" onClick={(e) => { e.preventDefault(); setShowAdvanced(!showAdvanced); }}>
+                {showAdvanced ? '收起高级参数 ▴' : '高级参数（接口路径 / 附加请求头）▾'}
+              </a>
+            </div>
+            {showAdvanced && (
+              <div class="col" style="margin-top:6px; padding-left:4px; border-left:2px solid var(--vscode-panel-border)">
+                <Field label="登录接口路径" hint="留空用官方 AuthService.ValidateUser">
+                  <input type="text" style="width:100%" placeholder="Kingdee.BOS.WebApi.ServicesStub.AuthService.ValidateUser.common.kdsvc" value={kd.loginPath ?? ''} onInput={(e: any) => onKdField('loginPath', e.target.value)} />
+                </Field>
+                <Field label="元数据接口路径" hint="留空用官方 QueryBusinessInfo">
+                  <input type="text" style="width:100%" placeholder="Kingdee.BOS.WebApi.ServicesStub.DynamicFormService.QueryBusinessInfo.common.kdsvc" value={kd.metadataPath ?? ''} onInput={(e: any) => onKdField('metadataPath', e.target.value)} />
+                </Field>
+                <Field label="附加请求头" hint='JSON，如 {"Key":"xxx"}'>
+                  <input type="text" style="width:100%" placeholder='{"Key":"xxx"}' value={kd.extraHeaders ?? ''} onInput={(e: any) => onKdField('extraHeaders', e.target.value)} />
+                </Field>
+                <Btn onClick={restoreDefaultPaths}>恢复默认接口路径</Btn>
+              </div>
+            )}
           </div>
         )}
         <div class="row" style="margin-top:10px">
           <Btn primary onClick={save} disabled={busy}>{busy ? '保存中…' : '保存到此项目'}</Btn>
-          <Btn onClick={fillFromGlobal} title="把旧版 devToolbox.kingdee.* 全局设置带进当前项目">从全局设置填充</Btn>
-          <Btn onClick={() => runTest('db')} disabled={testing !== ''} title="用本项目的数据库连接参数试连一次">
+          <Btn onClick={fillFromGlobal} disabled={kds.length === 0} title="把旧版 devToolbox.kingdee.* 全局设置带进当前金蝶配置">从全局设置填充</Btn>
+          <Btn onClick={() => runTest('db')} disabled={testing !== '' || dbs.length === 0} title="用当前数据库配置试连一次">
             {testing === 'db' ? '测试中…' : '测试 SQL 连接'}
           </Btn>
-          <Btn onClick={() => runTest('kingdee')} disabled={testing !== ''} title="用本项目的金蝶参数登录一次并校验接口可用">
+          <Btn onClick={() => runTest('kingdee')} disabled={testing !== '' || kds.length === 0} title="用当前金蝶配置登录一次并校验接口可用">
             {testing === 'kingdee' ? '测试中…' : '测试 WebAPI 配置'}
           </Btn>
           {msg && <span class="small mono">{msg}</span>}

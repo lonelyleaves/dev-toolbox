@@ -175,41 +175,54 @@ describe('数据字典：项目栏 / 冲突面板 / 来源面板 冒烟', () => 
 describe('项目连接配置面板', () => {
   const cfg = {
     connections: {
-      db: { client: 'mysql', host: '10.0.0.5', port: 3306, user: 'root', database: 'erp' } as const,
-      kingdee: { baseUrl: 'http://k3/a', dbId: '001', user: 'admin' } as const,
+      db: [{ id: 'default', name: '默认数据库', client: 'mysql', host: '10.0.0.5', port: 3306, user: 'root', database: 'erp' }],
+      kingdee: [{ id: 'default', name: '默认金蝶', baseUrl: 'http://k3/a', dbId: '001', user: 'admin' }],
     },
-  };
+  } as any;
 
-  it('渲染已有连接配置，并标注凭据"已保存"', async () => {
+  it('渲染多条连接配置的值', async () => {
     const { ProjectConfigPanel } = await import('../src/webview/pages/dictionary/panels');
     const { container, unmount } = await mount(h(ProjectConfigPanel, {
-      projectName: '制造库', config: cfg, savedSecretKeys: ['password', 'appSecret'], onSave: async () => {},
+      projectName: '制造库', config: cfg, onSave: async () => {},
     }));
     expect(container.textContent).toContain('制造库');
     const vals = [...container.querySelectorAll('input')].map((i) => (i as HTMLInputElement).value);
     expect(vals).toContain('10.0.0.5');
     expect(vals).toContain('http://k3/a');
-    expect(container.textContent).toContain('已保存');
     expect(container.textContent).toContain('不带密码');
     await unmount();
   });
 
-  it('保存时把表单值传给回调，未填写的密码不回传', async () => {
+  it('保存时把数组配置传给回调，未填写的密码不回传', async () => {
     const { ProjectConfigPanel } = await import('../src/webview/pages/dictionary/panels');
     let saved: any = null;
     const { container, unmount } = await mount(h(ProjectConfigPanel, {
-      projectName: '制造库', config: cfg, savedSecretKeys: [], onSave: async (c: any, s: any) => { saved = { c, s }; },
+      projectName: '制造库', config: cfg, onSave: async (c: any, s: any) => { saved = { c, s }; },
     }));
     const btn = [...container.querySelectorAll('button')].find((b) => b.textContent?.includes('保存到此项目'))!;
     expect(btn).toBeTruthy();
     btn.click();
     await new Promise((r) => setTimeout(r, 10));
     expect(saved).toBeTruthy();
-    expect(saved.c.connections.db.host).toBe('10.0.0.5');
-    expect(saved.c.connections.db.port).toBe(3306);
-    expect(saved.c.connections.kingdee.baseUrl).toBe('http://k3/a');
+    expect(saved.c.connections.db[0].host).toBe('10.0.0.5');
+    expect(saved.c.connections.db[0].port).toBe(3306);
+    expect(saved.c.connections.kingdee[0].baseUrl).toBe('http://k3/a');
     expect(saved.s.dbPassword).toBeUndefined();
     expect(saved.s.appSecret).toBeUndefined();
+    await unmount();
+  });
+
+  it('多配置：可新增/切换选中数据库配置', async () => {
+    const { ProjectConfigPanel } = await import('../src/webview/pages/dictionary/panels');
+    const { container, unmount } = await mount(h(ProjectConfigPanel, {
+      projectName: 'P', config: cfg, onSave: async () => {},
+    }));
+    const addBtn = [...container.querySelectorAll('button')].find((b) => b.textContent?.includes('新增数据库'))!;
+    expect(addBtn).toBeTruthy();
+    await act(async () => { addBtn.click(); });
+    await flush();
+    // 新增后数据库徒章数量变 2
+    expect(container.textContent).toContain('数据库连接（2）');
     await unmount();
   });
 });
@@ -298,8 +311,8 @@ describe('同步流程与连接状态指示', () => {
   it('项目栏状态点：配了连接显示绿点，没配显示灰点', async () => {
     const { ProjectBar } = await import('../src/webview/pages/dictionary/panels');
     const projects = [
-      { id: 'p1', name: '有连接', createdAt: '', updatedAt: '', sourceCount: 1, tableCount: 10, configSummary: { db: true, kingdee: true } },
-      { id: 'p2', name: '无连接', createdAt: '', updatedAt: '', sourceCount: 0, tableCount: 0, configSummary: { db: false, kingdee: false } },
+      { id: 'p1', name: '有连接', createdAt: '', updatedAt: '', sourceCount: 1, tableCount: 10, configSummary: { db: 1, kingdee: 1 } },
+      { id: 'p2', name: '无连接', createdAt: '', updatedAt: '', sourceCount: 0, tableCount: 0, configSummary: { db: 0, kingdee: 0 } },
     ];
     const { container, unmount } = await mount(h(ProjectBar, {
       projects, currentId: 'p1', onSwitch: () => {}, onCreate: () => {}, onRename: () => {},
@@ -339,9 +352,9 @@ describe('同步流程与连接状态指示', () => {
 
   it('连接配置页：两个测试按钮都在，且结果显示在页面上', async () => {
     const { ProjectConfigPanel } = await import('../src/webview/pages/dictionary/panels');
-    const cfg = { connections: { db: { client: 'mysql', host: 'h', port: 3306, user: 'u', database: 'd' }, kingdee: { baseUrl: 'http://k3' } } } as any;
+    const cfg = { connections: { db: [{ id: 'default', name: 'd', client: 'mysql', host: 'h', port: 3306, user: 'u', database: 'd' }], kingdee: [{ id: 'default', name: 'k', baseUrl: 'http://k3' }] } } as any;
     const { container, unmount } = await mount(h(ProjectConfigPanel, {
-      projectName: 'A客户', config: cfg, savedSecretKeys: [], savedDbKeys: [],
+      projectName: 'A客户', config: cfg,
       onTest: async () => '配置可用：已登录并取得会话',
       onSave: async () => {},
     }));
@@ -357,15 +370,13 @@ describe('同步流程与连接状态指示', () => {
     await unmount();
   });
 
-  it('数据库连接已存过密码时，面板标注「已保存」', async () => {
+  it('密码框：未传 projectId 时默认标注「未保存」', async () => {
     const { ProjectConfigPanel } = await import('../src/webview/pages/dictionary/panels');
-    const cfg = { connections: { db: { client: 'mysql', host: 'h', port: 3306, user: 'u', database: 'd' }, kingdee: {} } } as any;
+    const cfg = { connections: { db: [{ id: 'default', name: 'd', client: 'mysql', host: 'h', port: 3306, user: 'u', database: 'd' }], kingdee: [] } } as any;
     const { container, unmount } = await mount(h(ProjectConfigPanel, {
-      projectName: 'A客户', config: cfg,
-      savedSecretKeys: ['appSecret'], savedDbKeys: ['password'],
-      onTest: async () => '', onSave: async () => {},
+      projectName: 'A客户', config: cfg, onTest: async () => '', onSave: async () => {},
     }));
-    expect((container.textContent || '').includes('已保存')).toBe(true);
+    expect((container.textContent || '').includes('未保存')).toBe(true);
     await unmount();
   });
 });
@@ -583,53 +594,62 @@ describe('EncodePage EAS 报文解析模式', () => {
   });
 });
 
-describe('RepairPanel 三基线（SQL Server / MySQL / 金蝶 WebAPI / JSON）', () => {
-  async function mountRepair(preset?: any) {
+describe('RepairPanel 基线（数据库 4 类型 / 金蝶 WebAPI / JSON）', () => {
+  async function mountRepair(dbConfigs?: any, kdConfigs?: any) {
     const { RepairPanel } = await import('../src/webview/pages/DictionaryPage');
     const dict = { name: 'x', tables: [] } as any;
     const container = document.createElement('div');
     document.body.appendChild(container);
-    await act(async () => { render(h(RepairPanel, { dict, setDict: () => {}, baseline: null, setBaseline: () => {}, preset, projectId: 'p1' }), container); });
+    await act(async () => { render(h(RepairPanel, { dict, setDict: () => {}, baseline: null, setBaseline: () => {}, dbConfigs, kdConfigs, projectId: 'p1' }), container); });
     await flush();
     return container;
   }
   const inputs = (c: HTMLElement) => [...c.querySelectorAll('input')] as HTMLInputElement[];
-  const radios = (c: HTMLElement) => [...c.querySelectorAll('input[type="radio"]')] as HTMLInputElement[];
+  const catSelect = (c: HTMLElement) => c.querySelector('select[name="dt-baseline-cat"]') as HTMLSelectElement | null;
+  const kindSelect = (c: HTMLElement) => c.querySelector('select[name="dt-baseline-kind"]') as HTMLSelectElement | null;
   const switchKind = async (c: HTMLElement, label: string) => {
-    const r = radios(c).find((el) => (el.parentElement as HTMLElement).textContent?.includes(label));
-    if (!r) return;
-    r.click();
-    await flush();
+    // 先找一级（类别），再找二级（DB 类型）；命中哪个用哪个
+    for (const sel of [catSelect(c), kindSelect(c)]) {
+      if (!sel) continue;
+      const opt = [...sel.options].find((o) => o.textContent?.includes(label));
+      if (opt) {
+        sel.value = opt.value;
+        sel.dispatchEvent(new Event('input', { bubbles: true }));
+        await flush();
+        return;
+      }
+    }
   };
 
-  it('默认 SQL Server：4 个基线单选 + 连接行预填 1433/sa，无「项目连接」按钮', async () => {
+  it('默认 SQL Server：一级 3 类 + 二级 DB 4 项，连接行预填 1433/sa', async () => {
     const c = await mountRepair(undefined);
-    expect(radios(c).length).toBe(4);
+    expect(catSelect(c)!.options.length).toBe(3);
+    expect(kindSelect(c)!.options.length).toBe(4);
     const t = c.textContent || '';
     expect(t).toContain('SQL Server');
     expect(t).toContain('MySQL');
+    expect(t).toContain('PostgreSQL');
+    expect(t).toContain('Oracle');
     expect(t).toContain('金蝶 WebAPI');
     expect(t).toContain('JSON 文件');
     const port = inputs(c).find((i) => i.type === 'number') as HTMLInputElement;
     expect(port.value).toBe('1433');
     const btns = [...c.querySelectorAll('button')].map((b) => b.textContent || '');
     expect(btns).toContain('拉取库结构');
-    expect(btns).not.toContain('项目连接');
     document.body.removeChild(c);
   });
 
-  it('mssql preset：预填项目连接 + 出现「项目连接」还原按钮；MySQL preset 不串扰', async () => {
-    const c = await mountRepair({ client: 'mssql', host: 'prod.example.cn', port: 1433, user: 'sa', database: 'ERP_DB' });
+  it('有项目 DB 配置：按 client 预填连接行，出现「项目配置」下拉；不匹配类型不串扰', async () => {
+    const c = await mountRepair([{ id: 'd1', name: '生产', client: 'mssql', host: 'prod.example.cn', port: 1433, user: 'sa', database: 'ERP_DB' }]);
     const vals = inputs(c).map((i) => i.value);
     expect(vals).toContain('prod.example.cn');
     expect(vals).toContain('ERP_DB');
-    expect(vals).toContain('sa');
-    const btns = [...c.querySelectorAll('button')].map((b) => b.textContent || '');
-    expect(btns).toContain('项目连接');
+    const sel = [...c.querySelectorAll('select')].find((s) => [...s.options].some((o) => o.textContent?.includes('生产')));
+    expect(sel).toBeTruthy();
     document.body.removeChild(c);
 
-    const c2 = await mountRepair({ client: 'mysql', host: '10.0.0.2', port: 3307, user: 'dev', database: 'erp' });
-    // 默认 kind=sqlserver，mysql preset 不应预填到 SQL Server 连接行
+    // 默认 kind=sqlserver(client=mssql)，mysql 配置不应预填到 SQL Server 行
+    const c2 = await mountRepair([{ id: 'd2', name: 'm', client: 'mysql', host: '10.0.0.2', port: 3307, user: 'dev', database: 'erp' }]);
     const vals2 = inputs(c2).map((i) => i.value);
     expect(vals2).not.toContain('10.0.0.2');
     document.body.removeChild(c2);
@@ -662,6 +682,61 @@ describe('RepairPanel 三基线（SQL Server / MySQL / 金蝶 WebAPI / JSON）',
     expect(btns).toContain('选择 .dtcat.json');
     expect(inputs(c).some((i) => i.placeholder === 'host')).toBe(false);
     document.body.removeChild(c);
+  });
+
+  it('两级联动：默认数据库→二级 DB 下拉在；切 WebAPI→二级隐藏；切回→保留上次 DB 选择', async () => {
+    const c = await mountRepair(undefined);
+    // 默认 database，二级存在且为 SQL Server
+    expect(kindSelect(c)).not.toBeNull();
+    expect(kindSelect(c)!.value).toBe('sqlserver');
+    // 二级切到 MySQL
+    await switchKind(c, 'MySQL');
+    expect(kindSelect(c)!.value).toBe('mysql');
+    // 一级切到 WebAPI：二级 DB 下拉隐藏
+    await switchKind(c, '金蝶 WebAPI');
+    expect(kindSelect(c)).toBeNull();
+    // 一级切回数据库：二级重新出现，且保留上次的 MySQL
+    await switchKind(c, '数据库');
+    expect(kindSelect(c)).not.toBeNull();
+    expect(kindSelect(c)!.value).toBe('mysql');
+    document.body.removeChild(c);
+  });
+
+  it('JSON 粘贴模式：输入合法 .dtcat → 解析为基线（行为验证）', async () => {
+    const { RepairPanel } = await import('../src/webview/pages/DictionaryPage');
+    let baselined: any = null;
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    await act(async () => {
+      render(h(RepairPanel, {
+        dict: { name: 'x', tables: [] } as any, setDict: () => {},
+        baseline: null, setBaseline: (b: any) => { baselined = b; }, projectId: 'p1',
+      }), container);
+    });
+    await flush();
+    // 切到 JSON 类别
+    const cat = container.querySelector('select[name="dt-baseline-cat"]') as HTMLSelectElement;
+    cat.value = 'json';
+    cat.dispatchEvent(new Event('input', { bubbles: true }));
+    await flush();
+    // 默认文件模式：点「粘贴 JSON」切过来
+    const pasteTab = [...container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '粘贴 JSON')!;
+    expect(pasteTab).toBeTruthy();
+    await act(async () => { pasteTab.click(); });
+    await flush();
+    const ta = container.querySelector('textarea') as HTMLTextAreaElement;
+    expect(ta).toBeTruthy();
+    ta.value = JSON.stringify({ version: 1, tables: [{ name: 'T_P', columns: [] }] });
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    await flush();
+    const parseBtn = [...container.querySelectorAll('button')].find((b) => b.textContent?.includes('解析为基线'))!;
+    expect(parseBtn).toBeTruthy();
+    await act(async () => { parseBtn.click(); });
+    await flush();
+    expect(baselined).toBeTruthy();
+    expect(baselined.kind).toBe('json');
+    expect(baselined.dict.tables[0].name).toBe('T_P');
+    document.body.removeChild(container);
   });
 });
 

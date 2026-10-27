@@ -65,28 +65,28 @@ export const host = {
   projectExport: (id: string, defaultName?: string) => call<boolean>('projectExport', { id, defaultName }),
   projectImport: () => call<ProjectMeta | null>('projectImport'),
   projectGetConfig: (id: string) =>
-    call<{ config: ProjectConfig; defaults: { kingdee?: any }; hash: { db?: string; kingdee?: string } }>('projectGetConfig', { id }),
+    call<{ config: ProjectConfig; defaults: { kingdee?: any }; hash: Record<string, string> }>('projectGetConfig', { id }),
   projectSaveConfig: (id: string, config: ProjectConfig) => call<boolean>('projectSaveConfig', { id, config }),
-  projectSaveSecret: (projectId: string, kind: 'db' | 'kingdee', values: Record<string, string>) =>
-    call<boolean>('projectSaveSecret', { projectId, kind, values }),
-  projectSync: (projectId: string, kind: 'db' | 'kingdee', formIds?: string[]) =>
-    call<{ ok: boolean; dict?: any; meta?: any; error?: string }>('projectSync', { projectId, kind, formIds }, 120000),
+  projectSaveSecret: (projectId: string, kind: 'db' | 'kingdee', values: Record<string, string>, configId?: string) =>
+    call<boolean>('projectSaveSecret', { projectId, kind, values, configId }),
+  projectSync: (projectId: string, kind: 'db' | 'kingdee', configId?: string, formIds?: string[]) =>
+    call<{ ok: boolean; dict?: any; meta?: any; error?: string }>('projectSync', { projectId, kind, configId, formIds }, 120000),
   projectDiff: (projectId: string, otherId: string) =>
     call<{ ok: boolean; summary?: { added: number; removed: number; modified: number; total: number; leftName?: string; rightName?: string }; items?: any[]; error?: string }>(
       'projectDiff', { projectId, otherId }, 60000,
     ),
-  projectSaveCache: (projectId: string, kind: 'db' | 'kingdee', dict: any, meta?: any) =>
-    call<boolean>('projectSaveCache', { projectId, kind, dict, meta }),
+  projectSaveCache: (projectId: string, kind: 'db' | 'kingdee', dict: any, meta?: any, configId?: string) =>
+    call<boolean>('projectSaveCache', { projectId, kind, dict, meta, configId }),
   projectCacheMeta: (projectId: string) =>
-    call<Record<string, { importedAt?: string; stale?: boolean; tableCount?: number; configHash?: string }>>('projectCacheMeta', { projectId }),
-  kingdeeTestConfig: (projectId: string) => call<{ ok: boolean; message: string }>('kingdeeTestConfig', { projectId }, 60000),
-  projectReadSecretExists: (projectId: string, kind: 'db' | 'kingdee') => call<string[]>('projectReadSecretExists', { projectId, kind }),
+    call<Record<string, { importedAt?: string; stale?: boolean; tableCount?: number; configHash?: string; configId?: string; configName?: string }>>('projectCacheMeta', { projectId }),
+  kingdeeTestConfig: (projectId: string, configId?: string) => call<{ ok: boolean; message: string }>('kingdeeTestConfig', { projectId, configId }, 60000),
+  projectReadSecretExists: (projectId: string, kind: 'db' | 'kingdee', configId?: string) => call<string[]>('projectReadSecretExists', { projectId, kind, configId }),
 
   // ---------- 金蝶云星空 ----------
-  kingdeeFetchMetadata: (formIds: string[], opts?: { projectId?: string; appSecret?: string; password?: string }) =>
+  kingdeeFetchMetadata: (formIds: string[], opts?: { projectId?: string; configId?: string; appSecret?: string; password?: string }) =>
     call<{ ok: boolean; text?: string; error?: string }>('kingdeeFetchMetadata', { formIds, ...(opts || {}) }, 60000),
-  kingdeeSaveSecret: (appSecret?: string, password?: string, projectId?: string) =>
-    call<boolean>('kingdeeSaveSecret', { appSecret, password, projectId }),
+  kingdeeSaveSecret: (appSecret?: string, password?: string, projectId?: string, configId?: string) =>
+    call<boolean>('kingdeeSaveSecret', { appSecret, password, projectId, configId }),
   openBinaryFile: () => call<{ name: string; base64: string } | null>('openBinaryFile'),
   httpRequest: (payload: any) => call<HttpResponseData>('httpRequest', payload, (payload.timeoutMs ?? 30000) + 5000),
   dbTestConnection: (info: DbConnInfo) => call<string>('dbTestConnection', info, 20000),

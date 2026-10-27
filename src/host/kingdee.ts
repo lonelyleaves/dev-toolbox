@@ -11,7 +11,7 @@
  */
 import * as vscode from 'vscode';
 import { doHttpRequest } from './http';
-import { KingdeeConnectionConfig } from '../core/messaging';
+import { KingdeeConnectionConfig, ProjectConfig, findKingdeeConfig } from '../core/messaging';
 import { projectSecretKey } from './project-store';
 
 export interface KingdeeConfig {
@@ -104,18 +104,18 @@ function pickSessionCookie(setCookie: string | string[] | undefined): string {
 
 export const KINGDEE_SECRET_KEY = 'kingdee.credentials';
 
-export async function loadSecret(secrets: vscode.SecretStorage, projectId?: string): Promise<{ appSecret?: string; password?: string }> {
+export async function loadSecret(secrets: vscode.SecretStorage, projectId?: string, configId?: string): Promise<{ appSecret?: string; password?: string }> {
   try {
-    const raw = await secrets.get(projectId ? projectSecretKey(projectId, 'kingdee') : KINGDEE_SECRET_KEY);
+    const raw = await secrets.get(projectId ? projectSecretKey(projectId, 'kingdee', configId) : KINGDEE_SECRET_KEY);
     return raw ? JSON.parse(raw) : {};
   } catch {
     return {};
   }
 }
 
-export async function saveSecret(secrets: vscode.SecretStorage, appSecret?: string, password?: string, projectId?: string) {
-  const cur = await loadSecret(secrets, projectId);
-  await secrets.store(projectId ? projectSecretKey(projectId, 'kingdee') : KINGDEE_SECRET_KEY, JSON.stringify({
+export async function saveSecret(secrets: vscode.SecretStorage, appSecret?: string, password?: string, projectId?: string, configId?: string) {
+  const cur = await loadSecret(secrets, projectId, configId);
+  await secrets.store(projectId ? projectSecretKey(projectId, 'kingdee', configId) : KINGDEE_SECRET_KEY, JSON.stringify({
     appSecret: appSecret ?? cur.appSecret ?? '',
     password: password ?? cur.password ?? '',
   }));
@@ -176,10 +176,11 @@ export async function kingdeeTestProject(
   pc: KingdeeConnectionConfig,
   secrets?: vscode.SecretStorage,
   projectId?: string,
+  configId?: string,
 ): Promise<{ ok: boolean; message: string }> {
   try {
     if (!pc?.baseUrl) return { ok: false, message: '未填写站点地址（baseUrl）' };
-    const sec = secrets && projectId ? await loadSecret(secrets, projectId) : {};
+    const sec = secrets && projectId ? await loadSecret(secrets, projectId, configId) : {};
     const cfg = buildKingdeeConfig(pc, sec);
     const cookie = await login(cfg);
     return {
@@ -195,19 +196,19 @@ export async function kingdeeTestProject(
 
 export async function kingdeeFetchMetadata(
   formIds: string[],
-  opts: { projectId?: string; appSecret?: string; password?: string } = {},
+  opts: { projectId?: string; configId?: string; appSecret?: string; password?: string } = {},
   secrets?: vscode.SecretStorage,
-  loadProjectConfig?: (id: string) => { connections?: { kingdee?: KingdeeConnectionConfig } } | null,
+  loadProjectConfig?: (id: string) => ProjectConfig | null,
 ): Promise<KingdeeFetchResult> {
   try {
     if (!opts.projectId) return { ok: false, error: '当前没有选中项目，无法读取该项目的金蝶连接配置' };
-    const pc = loadProjectConfig?.(opts.projectId)?.connections?.kingdee;
+    const pc = findKingdeeConfig(loadProjectConfig?.(opts.projectId) || undefined, opts.configId);
     if (!pc?.baseUrl) {
       return { ok: false, error: '当前项目未配置金蝶连接：请在「项目配置 → 金蝶云星空」填写站点地址' };
     }
     if (!formIds.length) return { ok: false, error: '请至少填写一个表单标识（如 BD_MATERIAL）' };
 
-    const sec = secrets ? await loadSecret(secrets, opts.projectId) : {};
+    const sec = secrets ? await loadSecret(secrets, opts.projectId, opts.configId) : {};
     const cfg = buildKingdeeConfig(pc, {
       appSecret: opts.appSecret || sec.appSecret,
       password: opts.password || sec.password,

@@ -1,13 +1,13 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
-import { HostCommand, AppSettings } from '../core/messaging';
+import { HostCommand, AppSettings, findDbConfig, findKingdeeConfig } from '../core/messaging';
 import { toolById } from '../core/tool-registry';
 import { doHttpRequest } from './http';
 import { diffDictionaries } from '../dictionary/diffengine';
 import { testConnection, introspect, saveDbPassword } from './db';
 import { cryptoOps } from './crypto-ops';
 import { parseKingdeeMetadata } from '../dictionary/kingdee';
-import { ProjectStore, projectSecretKey, configHashOf, CacheMeta } from './project-store';
+import { ProjectStore, projectSecretKey, configHashOf, cacheSlot, CacheMeta } from './project-store';
 import { kingdeeFetchMetadata, saveSecret, KingdeeFetchResult, globalKingdeeDefaults, kingdeeTestProject } from './kingdee';
 
 let context: vscode.ExtensionContext;
@@ -132,33 +132,33 @@ export async function handleHostCommand(cmd: HostCommand, payload: any, panel: v
     }
     // 用本项目的连接重新拉取：结果写缓存（带配置指纹），返回给前端走冲突面板合并
     case 'projectSync': {
-      const { projectId, kind, formIds } = payload as { projectId: string; kind: 'db' | 'kingdee'; formIds?: string[] };
+      const { projectId, kind, configId, formIds } = payload as { projectId: string; kind: 'db' | 'kingdee'; configId?: string; formIds?: string[] };
       try {
         const cfg = projects().loadConfig(projectId);
         if (kind === 'db') {
-          const c = cfg.connections?.db;
+          const c = findDbConfig(cfg, configId);
           if (!c?.host || !c?.database) return { ok: false, error: '本项目未配置数据库连接：请在「连接配置 → 数据库连接」填写主机与库名' };
           const d = await introspect({
             client: c.client || 'mysql', host: c.host, port: c.port, user: c.user,
-            database: c.database, password: '', projectId,
+            database: c.database, password: '', projectId, configId: c.id,
           } as any, context.secrets);
           const meta: CacheMeta = {
-            kind: 'db', importedAt: new Date().toISOString(),
-            configHash: configHashOf(cfg, 'db'), tableCount: d.tables.length,
+            kind, configId: c.id, configName: c.name, importedAt: new Date().toISOString(),
+            configHash: configHashOf(cfg, 'db', c.id), tableCount: d.tables.length,
           };
           return { ok: true, dict: d, meta };
         }
-        const c = cfg.connections?.kingdee;
+        const c = findKingdeeConfig(cfg, configId);
         if (!c?.baseUrl) return { ok: false, error: '本项目未配置金蝶连接：请在「连接配置 → 金蝶云星空」填写站点地址' };
         // 表单标识：优先本次传入，其次用上次缓存里记的
-        const ids = (formIds && formIds.length ? formIds : projects().loadCache(projectId, 'kingdee')?.meta?.formIds) || [];
+        const ids = (formIds && formIds.length ? formIds : projects().loadCache(projectId, 'kingdee', c.id)?.meta?.formIds) || [];
         if (!ids.length) return { ok: false, error: '请先在「扩展字段 → 金蝶」填写至少一个表单标识（如 BD_MATERIAL）' };
-        const r = await kingdeeFetchMetadata(ids, { projectId }, context.secrets, (id) => projects().loadConfig(id));
+        const r = await kingdeeFetchMetadata(ids, { projectId, configId: c.id }, context.secrets, (id) => projects().loadConfig(id));
         if (!r.ok || !r.text) return { ok: false, error: r.error || '拉取失败' };
         const d = parseKingdeeMetadata(r.text, '金蝶元数据');
         const meta: CacheMeta = {
-          kind: 'kingdee', importedAt: new Date().toISOString(),
-          configHash: configHashOf(cfg, 'kingdee'), formIds: ids, tableCount: d.tables.length,
+          kind, configId: c.id, configName: c.name, importedAt: new Date().toISOString(),
+          configHash: configHashOf(cfg, 'kingdee', c.id), formIds: ids, tableCount: d.tables.length,
         };
         return { ok: true, dict: d, meta };
       } catch (e: any) {
@@ -168,16 +168,19 @@ export async function handleHostCommand(cmd: HostCommand, payload: any, panel: v
     // 只有前端在冲突面板点过「应用」、确认合并成功后才调用，
     // 否则用户点了取消，缓存却已经是新的 → 显示"刚刚拉取"但字典没变，状态不一致
     case 'projectSaveCache': {
-      const { projectId, kind, dict, meta } = payload as {
-        projectId: string; kind: 'db' | 'kingdee'; dict: any; meta?: any;
+      const { projectId, kind, configId, dict, meta } = payload as {
+        projectId: string; kind: 'db' | 'kingdee'; configId?: string; dict: any; meta?: any;
       };
+      const cid = configId ?? meta?.configId;
       projects().saveCache(projectId, kind, dict, {
         kind,
+        configId: cid,
+        configName: meta?.configName,
         importedAt: meta?.importedAt || new Date().toISOString(),
-        configHash: meta?.configHash ?? configHashOf(projects().loadConfig(projectId), kind),
+        configHash: meta?.configHash ?? configHashOf(projects().loadConfig(projectId), kind, cid),
         formIds: meta?.formIds,
         tableCount: meta?.tableCount ?? dict?.tables?.length,
-      });
+      }, cid);
       return true;
     }
     // 读取某类来源的上次拉取信息（时间 + 是否因改了连接而过期）
@@ -213,34 +216,42 @@ export async function handleHostCommand(cmd: HostCommand, payload: any, panel: v
     case 'projectCacheMeta': {
       const { projectId } = payload as { projectId: string };
       const cfg = projects().loadConfig(projectId);
-      // 必须回传 configHash：前端靠它与当前配置指纹比对来判断「改了连接没」，
-      // 少了这个字段 staleNow 恒为 false，「连接已变更」提示永远不会亮
-      const out: Record<string, { importedAt?: string; stale?: boolean; tableCount?: number; configHash?: string }> = {};
-      for (const kind of ['db', 'kingdee'] as const) {
-        const c = projects().loadCache(projectId, kind);
+      // 按具体配置逐条回传缓存状态（多配置下每条各自一个缓存槽）；key 用 cacheSlot
+      const out: Record<string, { importedAt?: string; stale?: boolean; tableCount?: number; configHash?: string; configId?: string; configName?: string }> = {};
+      const slots: { kind: 'db' | 'kingdee'; configId: string; configName?: string }[] = [
+        ...(cfg.connections?.db || []).map((d) => ({ kind: 'db' as const, configId: d.id, configName: d.name })),
+        ...(cfg.connections?.kingdee || []).map((k) => ({ kind: 'kingdee' as const, configId: k.id, configName: k.name })),
+      ];
+      for (const s of slots) {
+        const c = projects().loadCache(projectId, s.kind, s.configId);
         if (!c) continue;
-        out[kind] = {
+        out[cacheSlot(s.kind, s.configId)] = {
           importedAt: c.meta?.importedAt,
           tableCount: c.meta?.tableCount,
-          stale: c.meta?.configHash !== configHashOf(cfg, kind),
+          stale: c.meta?.configHash !== configHashOf(cfg, s.kind, s.configId),
           configHash: c.meta?.configHash,
+          configId: s.configId,
+          configName: s.configName,
         };
       }
       return out;
     }
     case 'kingdeeTestConfig': {
-      const { projectId } = payload as { projectId: string };
+      const { projectId, configId } = payload as { projectId: string; configId?: string };
       const cfg = projects().loadConfig(projectId);
-      return await kingdeeTestProject(cfg.connections?.kingdee || {}, context.secrets, projectId);
+      return await kingdeeTestProject(findKingdeeConfig(cfg, configId) || {}, context.secrets, projectId, configId);
     }
     case 'projectGetConfig': {
       const { id } = payload as { id: string };
       // defaults 只用于 UI 上的"从全局设置填充"，运行时拉取连接一律读项目配置
       const cfg = projects().loadConfig(id);
+      const hash: Record<string, string> = {};
+      for (const d of cfg.connections?.db || []) hash[cacheSlot('db', d.id)] = configHashOf(cfg, 'db', d.id);
+      for (const k of cfg.connections?.kingdee || []) hash[cacheSlot('kingdee', k.id)] = configHashOf(cfg, 'kingdee', k.id);
       return {
         config: cfg,
         defaults: { kingdee: globalKingdeeDefaults() },
-        hash: { db: configHashOf(cfg, 'db'), kingdee: configHashOf(cfg, 'kingdee') },
+        hash,
       };
     }
     case 'projectSaveConfig': {
@@ -249,8 +260,8 @@ export async function handleHostCommand(cmd: HostCommand, payload: any, panel: v
       return true;
     }
     case 'projectSaveSecret': {
-      const { projectId, kind, values } = payload as { projectId: string; kind: 'db' | 'kingdee'; values: Record<string, string> };
-      const key = projectSecretKey(projectId, kind);
+      const { projectId, kind, configId, values } = payload as { projectId: string; kind: 'db' | 'kingdee'; configId?: string; values: Record<string, string> };
+      const key = projectSecretKey(projectId, kind, configId);
       const curRaw = await context.secrets.get(key);
       let cur: Record<string, string> = {};
       try { cur = curRaw ? JSON.parse(curRaw) : {}; } catch { cur = {}; }
@@ -262,8 +273,8 @@ export async function handleHostCommand(cmd: HostCommand, payload: any, panel: v
       return true;
     }
     case 'projectReadSecretExists': {
-      const { projectId, kind } = payload as { projectId: string; kind: 'db' | 'kingdee' };
-      const raw = await context.secrets.get(projectSecretKey(projectId, kind));
+      const { projectId, kind, configId } = payload as { projectId: string; kind: 'db' | 'kingdee'; configId?: string };
+      const raw = await context.secrets.get(projectSecretKey(projectId, kind, configId));
       let keys: string[] = [];
       try { keys = raw ? Object.keys(JSON.parse(raw)) : []; } catch { keys = []; }
       return keys;
@@ -297,12 +308,12 @@ export async function handleHostCommand(cmd: HostCommand, payload: any, panel: v
     }
     // ---------- 金蝶云星空 ----------
     case 'kingdeeFetchMetadata': {
-      const p = payload as { formIds: string[]; projectId?: string; appSecret?: string; password?: string };
-      return await kingdeeFetchMetadata(p.formIds || [], { projectId: p.projectId, appSecret: p.appSecret, password: p.password }, context.secrets, (id) => projects().loadConfig(id));
+      const p = payload as { formIds: string[]; projectId?: string; configId?: string; appSecret?: string; password?: string };
+      return await kingdeeFetchMetadata(p.formIds || [], { projectId: p.projectId, configId: p.configId, appSecret: p.appSecret, password: p.password }, context.secrets, (id) => projects().loadConfig(id));
     }
     case 'kingdeeSaveSecret': {
-      const { appSecret, password, projectId } = payload as { appSecret?: string; password?: string; projectId?: string };
-      await saveSecret(context.secrets, appSecret, password, projectId);
+      const { appSecret, password, projectId, configId } = payload as { appSecret?: string; password?: string; projectId?: string; configId?: string };
+      await saveSecret(context.secrets, appSecret, password, projectId, configId);
       return true;
     }
     case 'readTextFileAt': {

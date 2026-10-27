@@ -14,13 +14,22 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { DictionaryModel } from '../dictionary/model';
-import { ProjectMeta, ProjectConfig, emptyProjectConfig } from '../core/messaging';
+import { ProjectMeta, ProjectConfig, emptyProjectConfig, normalizeConnections, findDbConfig, findKingdeeConfig, DEFAULT_CONFIG_ID } from '../core/messaging';
 
 export type { ProjectMeta, ProjectConfig };
 
-/** 项目级 SecretStorage 键：凭据按项目隔离，切项目 = 切这套凭据 */
-export function projectSecretKey(projectId: string, kind: 'db' | 'kingdee'): string {
-  return `devtoolbox.project.${projectId}.${kind}`;
+/**
+ * 项目级 SecretStorage 键：凭据按项目 + 配置隔离。
+ * configId 为 'default'/缺省时返回旧格式（老凭据直接命中，无损迁移）；新配置拼上 configId。
+ */
+export function projectSecretKey(projectId: string, kind: 'db' | 'kingdee', configId?: string): string {
+  const base = `devtoolbox.project.${projectId}.${kind}`;
+  return !configId || configId === DEFAULT_CONFIG_ID ? base : `${base}.${configId}`;
+}
+
+/** 缓存槽名：'default' 配置沿用旧 kind 名（旧缓存命中），其余拼 configId */
+export function cacheSlot(kind: string, configId?: string): string {
+  return !configId || configId === DEFAULT_CONFIG_ID ? kind : `${kind}__${configId}`;
 }
 
 export interface ProjectIndex {
@@ -52,11 +61,14 @@ export interface CacheMeta {
   configHash: string;
   formIds?: string[];
   tableCount?: number;
+  /** 多连接配置：这条缓存属于哪一条配置 */
+  configId?: string;
+  configName?: string;
 }
 
-/** 连接配置指纹（不含凭据）：用于判断"改了连接没" */
-export function configHashOf(cfg: ProjectConfig | undefined, kind: 'db' | 'kingdee'): string {
-  const c = kind === 'db' ? cfg?.connections?.db : cfg?.connections?.kingdee;
+/** 连接配置指纹（不含凭据）：用于判断"改了连接没"；按具体 configId 算 */
+export function configHashOf(cfg: ProjectConfig | undefined, kind: 'db' | 'kingdee', configId?: string): string {
+  const c = kind === 'db' ? findDbConfig(cfg, configId) : findKingdeeConfig(cfg, configId);
   if (!c) return '';
   const s = JSON.stringify(c);
   let h = 5381;
@@ -65,33 +77,22 @@ export function configHashOf(cfg: ProjectConfig | undefined, kind: 'db' | 'kingd
 }
 
 
-/** 白名单式取连接配置：凭据字段无论如何都不会被写进 config.json 或导出包 */
+/** 白名单式取连接配置：先归一化为数组，凭据字段无论如何都不会被写进 config.json 或导出包 */
 function sanitizeConfig(cfg: ProjectConfig | undefined): ProjectConfig {
+  const norm = normalizeConnections(cfg);
   const out = emptyProjectConfig();
-  const db = cfg?.connections?.db;
-  const kd = cfg?.connections?.kingdee;
-  if (db) {
-    out.connections.db = {
-      client: db.client,
-      host: db.host,
-      port: Number.isFinite(Number(db.port)) ? Number(db.port) : undefined,
-      user: db.user,
-      database: db.database,
-    };
-  }
-  if (kd) {
-    out.connections.kingdee = {
-      baseUrl: kd.baseUrl,
-      dbId: kd.dbId,
-      appId: kd.appId,
-      user: kd.user,
-      lcid: Number.isFinite(Number(kd.lcid)) ? Number(kd.lcid) : undefined,
-      loginPath: kd.loginPath,
-      metadataPath: kd.metadataPath,
-      argStyle: kd.argStyle,
-      extraHeaders: kd.extraHeaders,
-    };
-  }
+  out.connections.db = (norm.connections.db || []).map((d) => ({
+    id: d.id, name: d.name,
+    client: d.client, host: d.host,
+    port: Number.isFinite(Number(d.port)) ? Number(d.port) : undefined,
+    user: d.user, database: d.database,
+  }));
+  out.connections.kingdee = (norm.connections.kingdee || []).map((k) => ({
+    id: k.id, name: k.name,
+    baseUrl: k.baseUrl, dbId: k.dbId, appId: k.appId, user: k.user,
+    lcid: Number.isFinite(Number(k.lcid)) ? Number(k.lcid) : undefined,
+    loginPath: k.loginPath, metadataPath: k.metadataPath, argStyle: k.argStyle, extraHeaders: k.extraHeaders,
+  }));
   return out;
 }
 export class ProjectStore {
@@ -133,14 +134,16 @@ export class ProjectStore {
       projects: idx.projects.map((p) => {
         try {
           const c = this.loadConfig(p.id);
+          const dbs = c.connections?.db || [];
+          const kds = c.connections?.kingdee || [];
           return {
             ...p,
             configSummary: {
-              db: !!(c.connections?.db?.host && c.connections?.db?.database),
-              kingdee: !!c.connections?.kingdee?.baseUrl,
+              db: dbs.filter((d) => d.host && d.database).length,
+              kingdee: kds.filter((k) => k.baseUrl).length,
             },
           };
-        } catch { return { ...p, configSummary: { db: false, kingdee: false } }; }
+        } catch { return { ...p, configSummary: { db: 0, kingdee: 0 } }; }
       }),
     };
   }
@@ -246,30 +249,33 @@ export class ProjectStore {
     return path.join(this.dirOf(id), CACHE_DIR);
   }
 
-  /** 保存拉取结果（字典 + meta） */
-  saveCache(id: string, kind: string, dict: DictionaryModel, meta: CacheMeta) {
+  /** 保存拉取结果（字典 + meta）；按 configId 分槽 */
+  saveCache(id: string, kind: string, dict: DictionaryModel, meta: CacheMeta, configId?: string) {
     const dir = this.cacheDir(id);
+    const slot = cacheSlot(kind, configId ?? meta?.configId);
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, `${kind}.json`), JSON.stringify(dict), 'utf8');
-    fs.writeFileSync(path.join(dir, `${kind}.meta.json`), JSON.stringify(meta), 'utf8');
+    fs.writeFileSync(path.join(dir, `${slot}.json`), JSON.stringify(dict), 'utf8');
+    fs.writeFileSync(path.join(dir, `${slot}.meta.json`), JSON.stringify(meta), 'utf8');
   }
 
   /** 读取上次拉取结果；meta 里带 importedAt / configHash / formIds */
-  loadCache(id: string, kind: string): { dict: DictionaryModel; meta: CacheMeta } | null {
+  loadCache(id: string, kind: string, configId?: string): { dict: DictionaryModel; meta: CacheMeta } | null {
     try {
       const dir = this.cacheDir(id);
-      const dict = JSON.parse(fs.readFileSync(path.join(dir, `${kind}.json`), 'utf8'));
-      const meta = JSON.parse(fs.readFileSync(path.join(dir, `${kind}.meta.json`), 'utf8'));
+      const slot = cacheSlot(kind, configId);
+      const dict = JSON.parse(fs.readFileSync(path.join(dir, `${slot}.json`), 'utf8'));
+      const meta = JSON.parse(fs.readFileSync(path.join(dir, `${slot}.meta.json`), 'utf8'));
       return { dict, meta };
     } catch { return null; }
   }
 
-  clearCache(id: string, kind?: string) {
+  clearCache(id: string, kind?: string, configId?: string) {
     try {
       const dir = this.cacheDir(id);
       if (kind) {
-        fs.rmSync(path.join(dir, `${kind}.json`), { force: true });
-        fs.rmSync(path.join(dir, `${kind}.meta.json`), { force: true });
+        const slot = cacheSlot(kind, configId);
+        fs.rmSync(path.join(dir, `${slot}.json`), { force: true });
+        fs.rmSync(path.join(dir, `${slot}.meta.json`), { force: true });
         return;
       }
       fs.rmSync(dir, { recursive: true, force: true });

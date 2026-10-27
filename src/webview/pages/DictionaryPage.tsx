@@ -7,7 +7,7 @@ import { ProjectBar, SourcesPanel, MergePanel, KingdeePanel, KingdeeWebApiForm, 
 import { parsePdm } from '../../dictionary/pdm';
 import { parseDdl } from '../../dictionary/ddl';
 import { parseMarkdownDict } from '../../dictionary/markdown';
-import { emptyProjectConfig, type ProjectConfig } from '../../core/messaging';
+import { emptyProjectConfig, findDbConfig, findKingdeeConfig, type ProjectConfig, type NamedDbConfig, type NamedKingdeeConfig } from '../../core/messaging';
 import { diffDictionaries, generateFixSql, mergeBaseIntoTarget, diffReportMarkdown, DiffItem } from '../../dictionary/diffengine';
 import { lintDictionary, applyFixes, suggestComments, acceptSuggestions, Violation, NamingRules } from '../../dictionary/naming';
 import { exportMarkdown, exportHtml, exportMermaid, exportDdl, exportWordHtml, buildExcelSheets, dictStats, dictSearch, referrersOf } from '../../dictionary/exporters';
@@ -18,10 +18,10 @@ import { DbConnInfo, ProjectMeta } from '../../core/messaging';
 const CLIENT_DEFAULT_PORTS: Record<DbConnInfo['client'], number> = { mysql: 3306, postgres: 5432, mssql: 1433, oracle: 1521 };
 const CLIENT_LABELS: Record<DbConnInfo['client'], string> = { mysql: 'MySQL', postgres: 'PostgreSQL', mssql: 'SQL Server', oracle: 'Oracle' };
 const DB_PLACEHOLDER: Record<DbConnInfo['client'], string> = { mysql: 'database', postgres: 'database', mssql: 'database', oracle: '服务名 Service Name' };
-/** 构造一个来源记录（文件路径用于日后按原路径自动重解析） */
-function mkSource(kind: SourceKind, name: string, path?: string, tableCount = 0): DictSource {
+/** 构造一个来源记录（文件路径用于日后按原路径自动重解析；db/kingdee 带 configId 溯源） */
+function mkSource(kind: SourceKind, name: string, path?: string, tableCount = 0, configId?: string, configName?: string): DictSource {
   return {
-    id: makeSourceId(kind), kind, name, path,
+    id: makeSourceId(kind), kind, name, path, configId, configName,
     importedAt: new Date().toISOString(),
     parserVersion: PARSER_VERSION,
     tableCount, enabled: true,
@@ -395,22 +395,24 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
   const syncSource = async (id: string, kind: 'db' | 'kingdee') => {
     if (!currentId) return;
     try {
-      const r = await host.projectSync(currentId, kind);
-      if (!r?.ok || !r.dict) { alert(`同步失败：${r?.error || '未知错误'}`); return; }
       const s = (dict?.sources || []).find((x) => x.id === id);
+      const r = await host.projectSync(currentId, kind, s?.configId);
+      if (!r?.ok || !r.dict) { alert(`同步失败：${r?.error || '未知错误'}`); return; }
       const stripped = dict ? removeSource(dict, id).dict : null;
       const deferred = applyImport(r.dict, {
         id,
         kind,
         name: s?.name || (kind === 'db' ? '在线库' : '金蝶元数据'),
-        priority: s?.priority ?? (kind === 'db' ? 20 : 20),
+        configId: s?.configId ?? r.meta?.configId,
+        configName: s?.configName ?? r.meta?.configName,
+        priority: s?.priority ?? 20,
         enabled: true,
         importedAt: r.meta?.importedAt || new Date().toISOString(),
         tableCount: r.dict.tables.length,
       }, { projectId: currentId, base: stripped, sync: { kind, dict: r.dict, meta: r.meta } });
       // 无冲突时上面已直接落地，这里补写缓存；有冲突则交给冲突面板确认后再写
       if (!deferred) {
-        await host.projectSaveCache(currentId, kind, r.dict, r.meta).catch(() => undefined);
+        await host.projectSaveCache(currentId, kind, r.dict, r.meta, s?.configId ?? r.meta?.configId).catch(() => undefined);
       }
       setCacheMeta(await host.projectCacheMeta(currentId));
     } catch (e: any) {
@@ -434,23 +436,21 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
   };
 
   /** 连接配置页的「测试连接 / 测试 WebAPI 配置」：先落盘再测，避免测的是没保存的参数 */
-  const testConn = async (kind: 'db' | 'kingdee', cfg: ProjectConfig, secrets: any): Promise<string> => {
+  const testConn = async (kind: 'db' | 'kingdee', cfg: ProjectConfig, secrets: any, configId?: string): Promise<string> => {
     if (!currentId) return '未选中项目';
     try {
       await host.projectSaveConfig(currentId, cfg);
-      if (secrets?.dbPassword) await host.projectSaveSecret(currentId, 'db', { password: secrets.dbPassword });
+      if (secrets?.dbPassword) await host.projectSaveSecret(currentId, 'db', { password: secrets.dbPassword }, configId);
       const kv: Record<string, string> = {};
       if (secrets?.appSecret) kv.appSecret = secrets.appSecret;
       if (secrets?.password) kv.password = secrets.password;
-      if (Object.keys(kv).length) await host.projectSaveSecret(currentId, 'kingdee', kv);
-      // 测试连接也会顺带保存凭据，刷新"已保存/未保存"标记
-      setSecretKeys(await host.projectReadSecretExists(currentId, 'kingdee'));
-      setDbSecretKeys(await host.projectReadSecretExists(currentId, 'db'));
+      if (Object.keys(kv).length) await host.projectSaveSecret(currentId, 'kingdee', kv, configId);
       setProjectConfig(cfg);
       if (kind === 'db') {
-        return await host.dbTestConnection({ ...(cfg.connections?.db || {}), password: secrets?.dbPassword || '', projectId: currentId } as any);
+        const dbc = findDbConfig(cfg, configId);
+        return await host.dbTestConnection({ client: dbc?.client, host: dbc?.host, port: dbc?.port, user: dbc?.user, database: dbc?.database, password: secrets?.dbPassword || '', projectId: currentId, configId } as any);
       }
-      const r = await host.kingdeeTestConfig(currentId);
+      const r = await host.kingdeeTestConfig(currentId, configId);
       return r.ok ? r.message : `✗ ${r.message}`;
     } catch (e: any) {
       return `✗ ${e?.message || e}`;
@@ -497,8 +497,8 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
   };
 
   /** DB 反向导入 / 金蝶接入等非文件来源的统一入口 */
-  const finishImport = (d: DictionaryModel, name: string, kind: SourceKind = 'db') => {
-    applyImport(d, mkSource(kind, name || d.name || kind, undefined, d.tables.length));
+  const finishImport = (d: DictionaryModel, name: string, kind: SourceKind = 'db', configId?: string, configName?: string) => {
+    applyImport(d, mkSource(kind, name || d.name || kind, undefined, d.tables.length, configId, configName));
   };
 
   // ---------- 渲染 ----------
@@ -508,21 +508,18 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
       {currentId ? (
         <ProjectConfigPanel
           projectName={projects.find((x) => x.id === currentId)?.name || '当前项目'}
+          projectId={currentId}
           config={projectConfig}
-          savedSecretKeys={secretKeys}
-          savedDbKeys={dbSecretKeys}
           defaults={configDefaults}
           onTest={testConn}
           onSave={async (cfg, secrets) => {
             await host.projectSaveConfig(currentId, cfg);
-            if (secrets.dbPassword) await host.projectSaveSecret(currentId, 'db', { password: secrets.dbPassword });
+            if (secrets.dbPassword) await host.projectSaveSecret(currentId, 'db', { password: secrets.dbPassword }, secrets.dbConfigId);
             const kv: Record<string, string> = {};
             if (secrets.appSecret) kv.appSecret = secrets.appSecret;
             if (secrets.password) kv.password = secrets.password;
-            if (Object.keys(kv).length) await host.projectSaveSecret(currentId, 'kingdee', kv);
+            if (Object.keys(kv).length) await host.projectSaveSecret(currentId, 'kingdee', kv, secrets.kdConfigId);
             setProjectConfig(cfg);
-            setSecretKeys(await host.projectReadSecretExists(currentId, 'kingdee'));
-            setDbSecretKeys(await host.projectReadSecretExists(currentId, 'db'));
           }}
         />
       ) : (
@@ -678,7 +675,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
 
       {tab === 'edit' && table && <EditTable dict={dict} setDict={setDict} table={table} onRename={(newName) => setSelected(newName)} />}
       {tab === 'lint' && <LintPanel dict={dict} setDict={setDict} naming={naming} />}
-      {tab === 'repair' && <RepairPanel dict={dict} setDict={setDict} baseline={baseline} setBaseline={setBaseline} preset={projectConfig.connections?.db} projectId={currentId} />}
+      {tab === 'repair' && <RepairPanel dict={dict} setDict={setDict} baseline={baseline} setBaseline={setBaseline} dbConfigs={projectConfig.connections?.db} kdConfigs={projectConfig.connections?.kingdee} projectId={currentId} />}
       {tab === 'xdiff' && (
         <CrossProjectDiffPanel
           projects={projects}
@@ -720,9 +717,9 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
             <div class="small muted" style="margin-bottom:6px">
               在已有 PDM 字典上叠加真实库的字段：按表名归一化匹配，库里新增的表/字段会并入，同名差异会弹冲突面板让你选。
             </div>
-            <DbImportForm projectId={currentId} preset={projectConfig.connections?.db} onImported={(d) => finishImport(d, `${d.name || '数据库'}`, 'db')} />
+            <DbImportForm projectId={currentId} preset={projectConfig.connections?.db} onImported={(d, cid) => finishImport(d, `${d.name || '数据库'}`, 'db', cid, (projectConfig.connections?.db || []).find((c) => c.id === cid)?.name)} />
           </Section>
-          <KingdeePanel projectId={currentId} onImport={(d, name) => finishImport(d, name, 'kingdee')} />
+          <KingdeePanel projectId={currentId} configs={projectConfig.connections?.kingdee} onImport={(d, name, cid) => finishImport(d, name, 'kingdee', cid, (projectConfig.connections?.kingdee || []).find((c) => c.id === cid)?.name)} />
         </div>
       )}
     </div>
@@ -730,20 +727,30 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
 }
 
 // ---------- 在线库导入表单 ----------
-function DbImportForm({ projectId, preset, onImported }: { projectId?: string | null; preset?: ProjectConfig['connections']['db']; onImported: (d: DictionaryModel) => void }) {
+function DbImportForm({ projectId, preset, onImported }: { projectId?: string | null; preset?: NamedDbConfig[]; onImported: (d: DictionaryModel, configId?: string) => void }) {
+  const first = (preset || [])[0];
+  const [cfgId, setCfgId] = useState(first?.id || '');
   // 表单初值来自本项目的连接配置；密码不回显，留空则用该项目已保存的密码
   const [info, setInfo] = useState<DbConnInfo>({
-    client: preset?.client || 'mysql',
-    host: preset?.host || '127.0.0.1',
-    port: preset?.port || 3306,
-    user: preset?.user || 'root',
+    client: first?.client || 'mysql',
+    host: first?.host || '127.0.0.1',
+    port: first?.port || 3306,
+    user: first?.user || 'root',
     password: '',
-    database: preset?.database || '',
+    database: first?.database || '',
+    configId: first?.id,
   });
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState('');
 
-  // 带上 projectId：密码优先从该项目的凭据里取，实现"同一库不同项目不同密码"
+  const applyCfg = (id: string) => {
+    setCfgId(id);
+    const c = (preset || []).find((x) => x.id === id);
+    if (!c) return;
+    setInfo({ client: c.client || 'mysql', host: c.host || '127.0.0.1', port: c.port || 3306, user: c.user || 'root', password: '', database: c.database || '', configId: c.id });
+  };
+
+  // 带上 projectId + configId：密码优先从该项目该配置的凭据里取，实现"同库不同配置不同密码"
   const conn = { ...info, projectId: projectId ?? undefined };
 
   const test = async () => {
@@ -756,22 +763,33 @@ function DbImportForm({ projectId, preset, onImported }: { projectId?: string | 
     try {
       const d = await host.dbIntrospect(conn);
       if (info.password) await host.dbSavePassword({ ...conn, secretKey: undefined }, info.password);
-      onImported(d);
+      onImported(d, info.configId);
     } catch (e: any) { setMsg(`✗ ${e?.message || e}`); }
     setBusy('');
   };
 
   return (
-    <div class="row" style="margin-top:6px">
-      <ClientPicker info={info} onChange={setInfo} />
-      <input type="text" style="width:130px" placeholder="host" value={info.host} onInput={(e) => setInfo({ ...info, host: (e.target as HTMLInputElement).value })} />
-      <input type="number" style="width:64px" value={info.port} onInput={(e) => setInfo({ ...info, port: Number((e.target as HTMLInputElement).value) })} />
-      <input type="text" style="width:90px" placeholder="user" value={info.user} onInput={(e) => setInfo({ ...info, user: (e.target as HTMLInputElement).value })} />
-      <input type="password" style="width:110px" placeholder="password" value={info.password} onInput={(e) => setInfo({ ...info, password: (e.target as HTMLInputElement).value })} />
-      <input type="text" style="width:130px" placeholder={DB_PLACEHOLDER[info.client]} value={info.database} onInput={(e) => setInfo({ ...info, database: (e.target as HTMLInputElement).value })} />
-      <Btn onClick={test} disabled={!!busy}>{busy === 'test' ? '测试中…' : '测试连接'}</Btn>
-      <Btn primary onClick={imp} disabled={!!busy || !info.database}>{busy === 'import' ? '导入中…' : '反向导入'}</Btn>
-      {msg && <span class="small mono">{msg}</span>}
+    <div>
+      {(preset || []).length > 0 && (
+        <div class="row" style="margin-bottom:6px;gap:8px">
+          <span class="small muted">项目配置：</span>
+          <select value={cfgId} onInput={(e) => applyCfg((e.target as HTMLSelectElement).value)}>
+            <option value="">（手动填写）</option>
+            {(preset || []).map((c) => <option value={c.id}>{c.name}（{c.host}/{c.database}）</option>)}
+          </select>
+        </div>
+      )}
+      <div class="row" style="margin-top:6px">
+        <ClientPicker info={info} onChange={setInfo} />
+        <input type="text" style="width:130px" placeholder="host" value={info.host} onInput={(e) => setInfo({ ...info, host: (e.target as HTMLInputElement).value })} />
+        <input type="number" style="width:64px" value={info.port} onInput={(e) => setInfo({ ...info, port: Number((e.target as HTMLInputElement).value) })} />
+        <input type="text" style="width:90px" placeholder="user" value={info.user} onInput={(e) => setInfo({ ...info, user: (e.target as HTMLInputElement).value })} />
+        <input type="password" style="width:110px" placeholder="password" value={info.password} onInput={(e) => setInfo({ ...info, password: (e.target as HTMLInputElement).value })} />
+        <input type="text" style="width:130px" placeholder={DB_PLACEHOLDER[info.client]} value={info.database} onInput={(e) => setInfo({ ...info, database: (e.target as HTMLInputElement).value })} />
+        <Btn onClick={test} disabled={!!busy}>{busy === 'test' ? '测试中…' : '测试连接'}</Btn>
+        <Btn primary onClick={imp} disabled={!!busy || !info.database}>{busy === 'import' ? '导入中…' : '反向导入'}</Btn>
+        {msg && <span class="small mono">{msg}</span>}
+      </div>
     </div>
   );
 }
@@ -971,15 +989,24 @@ function LintPanel({ dict, setDict, naming: initialRules }: { dict: DictionaryMo
 }
 
 // ---------- 比对修复 ----------
-export type BaselineKind = 'sqlserver' | 'mysql' | 'webapi' | 'json';
+export type BaselineKind = 'sqlserver' | 'mysql' | 'postgres' | 'oracle' | 'webapi' | 'json';
+/** 一级基线类别：数据库（下再选具体 DB）/ WebAPI / JSON */
+export type BaselineCategory = 'database' | 'webapi' | 'json';
 export interface RepairBaseline { dict: DictionaryModel; kind: BaselineKind; label: string; }
 
+/** 数据库基线类型 → client / 默认端口 / 默认用户 */
+const DB_BASELINE_KINDS: { id: BaselineKind; label: string; client: DbConnInfo['client']; port: number; user: string }[] = [
+  { id: 'sqlserver', label: 'SQL Server', client: 'mssql', port: 1433, user: 'sa' },
+  { id: 'mysql', label: 'MySQL', client: 'mysql', port: 3306, user: 'root' },
+  { id: 'postgres', label: 'PostgreSQL', client: 'postgres', port: 5432, user: 'postgres' },
+  { id: 'oracle', label: 'Oracle', client: 'oracle', port: 1521, user: '' },
+];
 const BASELINE_KINDS: { id: BaselineKind; label: string }[] = [
-  { id: 'sqlserver', label: 'SQL Server' },
-  { id: 'mysql', label: 'MySQL' },
+  ...DB_BASELINE_KINDS.map((k) => ({ id: k.id, label: k.label })),
   { id: 'webapi', label: '金蝶 WebAPI' },
   { id: 'json', label: 'JSON 文件' },
 ];
+const isDbKind = (k: BaselineKind) => DB_BASELINE_KINDS.some((d) => d.id === k);
 
 /** .dtcat.json 校验解析（「导入」页签与「比对修复」JSON 基线共用） */
 export function parseDtcat(content: string, name: string): DictionaryModel {
@@ -989,28 +1016,34 @@ export function parseDtcat(content: string, name: string): DictionaryModel {
   return d as DictionaryModel;
 }
 
-/** 基线 kind → 项目连接预填（client 匹配才预填；密码不回显，走凭据库） */
-function connFor(kind: 'sqlserver' | 'mysql', preset?: ProjectConfig['connections']['db']): DbConnInfo {
-  const client: DbConnInfo['client'] = kind === 'sqlserver' ? 'mssql' : 'mysql';
-  const p = preset && preset.client === client ? preset : undefined;
+/** 基线 kind → 连接初值；从项目配置里挑 client 匹配的一条预填（密码不回显，走凭据库） */
+function connFor(kind: BaselineKind, preset?: NamedDbConfig[]): DbConnInfo {
+  const meta = DB_BASELINE_KINDS.find((d) => d.id === kind) || DB_BASELINE_KINDS[0];
+  const p = (preset || []).find((c) => c.client === meta.client);
   return {
-    client,
+    client: meta.client,
     host: p?.host || '127.0.0.1',
-    port: p?.port || (kind === 'sqlserver' ? 1433 : 3306),
-    user: p?.user || (kind === 'sqlserver' ? 'sa' : 'root'),
+    port: p?.port || meta.port,
+    user: p?.user || meta.user,
     password: '',
     database: p?.database || '',
+    configId: p?.id,
   };
 }
 
-export function RepairPanel({ dict, setDict, baseline, setBaseline, preset, projectId }: {
+export function RepairPanel({ dict, setDict, baseline, setBaseline, dbConfigs, kdConfigs, projectId }: {
   dict: DictionaryModel; setDict: (d: DictionaryModel) => void;
   baseline: RepairBaseline | null; setBaseline: (b: RepairBaseline | null) => void;
-  preset?: ProjectConfig['connections']['db']; projectId?: string | null;
+  dbConfigs?: NamedDbConfig[]; kdConfigs?: NamedKingdeeConfig[]; projectId?: string | null;
 }) {
   const [kind, setKind] = useState<BaselineKind>('sqlserver');
-  const [info, setInfo] = useState<DbConnInfo>(() => connFor('sqlserver', preset));
+  // 记住数据库子类型：切到 WebAPI/JSON 再切回时不丢上次选择
+  const [lastDbKind, setLastDbKind] = useState<BaselineKind>('sqlserver');
+  const [info, setInfo] = useState<DbConnInfo>(() => connFor('sqlserver', dbConfigs));
   const [jsonPicked, setJsonPicked] = useState('');
+  const [jsonMode, setJsonMode] = useState<'file' | 'paste'>('file');
+  const [jsonText, setJsonText] = useState('');
+  const [kdConfigId, setKdConfigId] = useState<string>(kdConfigs?.[0]?.id || '');
   const [includeDangerous, setIncludeDangerous] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -1018,12 +1051,24 @@ export function RepairPanel({ dict, setDict, baseline, setBaseline, preset, proj
   const items: DiffItem[] = useMemo(() => (baseline ? diffDictionaries(baseline.dict, dict) : []), [baseline, dict]);
   const fixSql = useMemo(() => (baseline ? generateFixSql(baseline.dict, dict, includeDangerous) : []), [baseline, dict, includeDangerous]);
 
-  const isDb = kind === 'sqlserver' || kind === 'mysql';
-  const presetConn = preset && preset.client === (kind === 'sqlserver' ? 'mssql' : 'mysql') ? preset : undefined;
+  const isDb = isDbKind(kind);
+  const category: BaselineCategory = kind === 'webapi' ? 'webapi' : kind === 'json' ? 'json' : 'database';
+  const dbKind: BaselineKind = isDb ? kind : lastDbKind;
 
   const switchKind = (k: BaselineKind) => {
     setKind(k);
-    if (k === 'sqlserver' || k === 'mysql') setInfo(connFor(k, preset));
+    if (isDbKind(k)) { setLastDbKind(k); setInfo(connFor(k, dbConfigs)); }
+    setErr('');
+  };
+  const setCategory = (c: BaselineCategory) => switchKind(c === 'database' ? lastDbKind : c);
+
+  /** 从项目某条 DB 配置预填（切换类型 + 连接信息） */
+  const applyDbConfig = (configId: string) => {
+    const c = (dbConfigs || []).find((x) => x.id === configId);
+    if (!c) return;
+    const k = DB_BASELINE_KINDS.find((d) => d.client === c.client)?.id || 'mysql';
+    setKind(k); setLastDbKind(k);
+    setInfo({ client: c.client || 'mysql', host: c.host || '127.0.0.1', port: c.port || 3306, user: c.user || '', password: '', database: c.database || '', configId: c.id });
     setErr('');
   };
 
@@ -1051,39 +1096,85 @@ export function RepairPanel({ dict, setDict, baseline, setBaseline, preset, proj
     setBusy(false);
   };
 
+  const parseJsonText = () => {
+    setErr('');
+    try {
+      const d = parseDtcat(jsonText, '粘贴的 JSON');
+      setJsonPicked(`粘贴内容（${d.tables.length} 表）`);
+      setBaseline({ dict: d, kind: 'json', label: '粘贴 JSON' });
+    } catch (e: any) { setErr(String(e?.message || e)); }
+  };
+
   return (
     <div>
       <Section title="拉取真实结构作为比对基准（现状）">
-        <div class="row" style="margin-bottom:6px;gap:14px">
+        <div class="row" style="margin-bottom:6px;gap:10px">
           <span class="small muted">基线来源：</span>
-          {BASELINE_KINDS.map((k) => (
-            <label class="small" key={k.id} style="cursor:pointer">
-              <input type="radio" name="dt-baseline-kind" checked={kind === k.id} onChange={() => switchKind(k.id)} /> {k.label}
-            </label>
-          ))}
+          <select name="dt-baseline-cat" value={category} onInput={(e) => setCategory((e.target as HTMLSelectElement).value as BaselineCategory)}>
+            <option value="database">数据库</option>
+            <option value="webapi">金蝶 WebAPI</option>
+            <option value="json">JSON 文件</option>
+          </select>
+          {category === 'database' && (
+            <select name="dt-baseline-kind" value={dbKind} onInput={(e) => switchKind((e.target as HTMLSelectElement).value as BaselineKind)}>
+              {DB_BASELINE_KINDS.map((d) => <option value={d.id}>{d.label}</option>)}
+            </select>
+          )}
         </div>
         {isDb && (
-          <div class="row">
-            <span class="badge info" style="align-self:center">{kind === 'sqlserver' ? 'SQL Server' : 'MySQL'}</span>
-            <input type="text" style="width:120px" placeholder="host" value={info.host} onInput={(e) => setInfo({ ...info, host: (e.target as HTMLInputElement).value })} />
-            <input type="number" style="width:60px" value={info.port} onInput={(e) => setInfo({ ...info, port: Number((e.target as HTMLInputElement).value) })} />
-            <input type="text" style="width:80px" placeholder="user" value={info.user} onInput={(e) => setInfo({ ...info, user: (e.target as HTMLInputElement).value })} />
-            <input type="password" style="width:100px" placeholder="password" value={info.password} onInput={(e) => setInfo({ ...info, password: (e.target as HTMLInputElement).value })} />
-            <input type="text" style="width:120px" placeholder="database" value={info.database} onInput={(e) => setInfo({ ...info, database: (e.target as HTMLInputElement).value })} />
-            {presetConn && <Btn onClick={() => setInfo(connFor(kind, preset))} title="手动改过？一键还原为「连接配置」页签里的本项目 DB 连接（密码走项目凭据库）">项目连接</Btn>}
-            <Btn primary onClick={pullDb} disabled={busy || !info.database}>{busy ? '拉取中…' : '拉取库结构'}</Btn>
+          <div>
+            {(dbConfigs || []).length > 0 && (
+              <div class="row" style="margin-bottom:6px;gap:8px">
+                <span class="small muted">项目配置预填：</span>
+                <select value={info.configId || ''} onInput={(e) => { const v = (e.target as HTMLSelectElement).value; if (v) applyDbConfig(v); }}>
+                  <option value="">（手动填写）</option>
+                  {(dbConfigs || []).map((c) => <option value={c.id}>{c.name}（{c.host}/{c.database}）</option>)}
+                </select>
+              </div>
+            )}
+            <div class="row">
+              <span class="badge info" style="align-self:center">{DB_BASELINE_KINDS.find((d) => d.id === kind)?.label}</span>
+              <input type="text" style="width:120px" placeholder="host" value={info.host} onInput={(e) => setInfo({ ...info, host: (e.target as HTMLInputElement).value })} />
+              <input type="number" style="width:60px" value={info.port} onInput={(e) => setInfo({ ...info, port: Number((e.target as HTMLInputElement).value) })} />
+              <input type="text" style="width:80px" placeholder="user" value={info.user} onInput={(e) => setInfo({ ...info, user: (e.target as HTMLInputElement).value })} />
+              <input type="password" style="width:100px" placeholder="password" value={info.password} onInput={(e) => setInfo({ ...info, password: (e.target as HTMLInputElement).value })} />
+              <input type="text" style="width:120px" placeholder="database" value={info.database} onInput={(e) => setInfo({ ...info, database: (e.target as HTMLInputElement).value })} />
+              <Btn primary onClick={pullDb} disabled={busy || !info.database}>{busy ? '拉取中…' : '拉取库结构'}</Btn>
+            </div>
           </div>
         )}
         {kind === 'webapi' && (
           <div>
-            <div class="small muted" style="margin-bottom:6px">走项目金蝶配置（「连接配置」页签）拉取表单元数据；appSecret / 密码留空则用项目凭据库已存值。</div>
-            <KingdeeWebApiForm projectId={projectId} onFetched={(d, label) => { setJsonPicked(''); setBaseline({ dict: d, kind: 'webapi', label }); }} />
+            {(kdConfigs || []).length > 1 && (
+              <div class="row" style="margin-bottom:6px;gap:8px">
+                <span class="small muted">金蝶配置：</span>
+                <select value={kdConfigId} onInput={(e) => setKdConfigId((e.target as HTMLSelectElement).value)}>
+                  {(kdConfigs || []).map((c) => <option value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+            )}
+            <div class="small muted" style="margin-bottom:6px">走项目金蝶配置拉取表单元数据；appSecret / 密码留空则用项目凭据库已存值。</div>
+            <KingdeeWebApiForm projectId={projectId} configId={kdConfigId || kdConfigs?.[0]?.id} onFetched={(d, label) => { setJsonPicked(''); setBaseline({ dict: d, kind: 'webapi', label }); }} />
           </div>
         )}
         {kind === 'json' && (
-          <div class="row">
-            <Btn onClick={pickJson} disabled={busy}>{jsonPicked ? '重选 .dtcat.json' : '选择 .dtcat.json'}</Btn>
-            {jsonPicked && <span class="small muted">{jsonPicked}</span>}
+          <div>
+            <div class="row" style="margin-bottom:6px;gap:8px">
+              <button class={`btn${jsonMode === 'file' ? ' primary' : ''}`} onClick={() => setJsonMode('file')}>导入文件</button>
+              <button class={`btn${jsonMode === 'paste' ? ' primary' : ''}`} onClick={() => setJsonMode('paste')}>粘贴 JSON</button>
+            </div>
+            {jsonMode === 'file' && (
+              <div class="row">
+                <Btn onClick={pickJson} disabled={busy}>{jsonPicked ? '重选 .dtcat.json' : '选择 .dtcat.json'}</Btn>
+                {jsonPicked && <span class="small muted">{jsonPicked}</span>}
+              </div>
+            )}
+            {jsonMode === 'paste' && (
+              <div>
+                <textarea class="mono" rows={8} style="width:100%" placeholder='粘贴 .dtcat.json 内容：{"version":1,"tables":[...]}' value={jsonText} onInput={(e) => setJsonText((e.target as HTMLTextAreaElement).value)} />
+                <div class="row" style="margin-top:6px"><Btn primary onClick={parseJsonText} disabled={!jsonText.trim()}>解析为基线</Btn></div>
+              </div>
+            )}
           </div>
         )}
         {err && <div class="error-text">{err}</div>}

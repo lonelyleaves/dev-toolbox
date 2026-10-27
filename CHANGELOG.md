@@ -3,18 +3,21 @@
 ## [0.6.9] - 2026-10-27
 
 ### Added
-- **比对修复支持三基线来源**：SQL Server / MySQL / 金蝶 WebAPI / JSON 文件（.dtcat.json）
-  基线来源单选切换；WebAPI 复用「扩展字段」页签的金蝶直连表单（抽为共享组件 KingdeeWebApiForm）
-  JSON 分支抽出 parseDtcat 校验解析（「导入」页签同源逻辑）
-- 拉取后显示基线标签（[SQL Server] host:port/db、[金蝶 WebAPI] 表单清单、[JSON] 文件名）
-- 以基线为准回写字典统一走 mergeBaseIntoTarget（带变更标记）
-- 金蝶 WebAPI 基线的修复 SQL 标注「仅参考，金蝶端无 DDL 执行通道」
+- **一个项目支持多条连接配置**：数据库与金蝶 WebAPI 均可配多条（命名列表）
+  - 数据模型 `connections.db` / `connections.kingdee` 由单对象改为命名数组（带 id/name）；旧单配置自动迁移为 `id='default'`
+  - 凭据按项目+配置隔离：`default` 沿用旧凭据 key（老密码不丢），新配置拼 configId；拉取缓存按 `<kind>__<configId>` 分槽互不覆盖
+  - 「连接配置」页改为多配置列表（新增/重命名/删除/切换选中），测试与凭据"已保存"标记都按当前配置
+- **比对修复基线来源重设**：一级选「数据库 / 金蝶 WebAPI / JSON 文件」；数据库二级可选 **SQL Server / MySQL / PostgreSQL / Oracle**（端口自动变）
+  - 数据库与金蝶分支均新增「从项目配置预填」下拉（多配置时选一条）；JSON 分为**导入文件 / 粘贴 JSON** 两种输入（粘贴走 parseDtcat）
+  - 切走再切回数据库会记住上次 DB 类型（lastDbKind）；WebAPI 复用共享组件 KingdeeWebApiForm
+- 拉取后显示基线标签；以基线为准回写字典统一走 mergeBaseIntoTarget（带变更标记）；金蝶 WebAPI 基线的修复 SQL 标注「仅参考，金蝶端无 DDL 执行通道」
+- 来源记录新增 `configId`/`configName` 溯源；同步/刷新按来源所属配置拉取；项目栏摘要由布尔改为"配了几条"计数
 
 ### Notes
-- SQL Server / MySQL 连接行按 kind 预填「连接配置」项目连接（client 匹配才预填，密码走凭据库）
+- 多配置贯通宿主命令（projectSync / projectSaveCache / kingdee* / db* 均透传 configId）；`configHashOf` 按具体 configId 算指纹
 
 ### Tests
-- 新增 7 例（基线单选/预填/切换 + parseDtcat 校验），累计 307 例通过
+- 新增多配置端到端验证（真实磁盘迁移/凭据与缓存隔离/指纹计数/findDbConfig 回落）与 JSON 粘贴行为测试；累计 327 例通过
 
 ### Fixed
 - SQL Server 拉取报 `Validation failed: Invalid string`：mssql v11 三参绑定修复（原 0.7.2 修复随版本回退并入本版）

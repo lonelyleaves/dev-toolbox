@@ -31,8 +31,8 @@ export interface ProjectMeta {
   updatedAt: string;
   sourceCount: number;
   tableCount: number;
-  /** 本项目的连接配置摘要（用于项目栏的状态点：配没配数据库连接/金蝶连接） */
-  configSummary?: { db: boolean; kingdee: boolean };
+  /** 本项目的连接配置摘要（配了几条数据库/金蝶连接，用于项目栏状态点） */
+  configSummary?: { db: number; kingdee: number };
 }
 
 /** 项目级连接配置：跟着项目走，切换项目 = 切换这套连接；凭据一律不落在这里 */
@@ -95,15 +95,65 @@ export type CryptoOpsResult =
   | ({ ok: true; text?: string; supports?: Record<string, boolean> } & Record<string, unknown>)
   | { ok: false; error: string; supports?: Record<string, boolean> };
 
+export interface NamedDbConfig extends DbConnectionConfig {
+  id: string;
+  name: string;
+}
+
+export interface NamedKingdeeConfig extends KingdeeConnectionConfig {
+  id: string;
+  name: string;
+}
+
+/** 迁移旧单配置时赋的保留 id：凭据 key 沿用旧格式，不丢已存密码 */
+export const DEFAULT_CONFIG_ID = 'default';
+
+/** 生成新配置 id */
+export function newConfigId(): string {
+  return `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+}
+
+/** 旧单对象 / 新数组 → 命名配置数组（无损迁移；旧单配置赋 id='default'） */
+function toNamedList<T extends object>(raw: unknown, defName: string): (T & { id: string; name: string })[] {
+  if (!raw) return [];
+  if (Array.isArray(raw)) {
+    return raw.map((x, i) => ({ ...(x as object), id: (x as any)?.id || DEFAULT_CONFIG_ID, name: (x as any)?.name || `${defName} ${i + 1}` }) as T & { id: string; name: string });
+  }
+  const obj = raw as object;
+  return Object.keys(obj).length ? [{ ...obj, id: DEFAULT_CONFIG_ID, name: defName } as T & { id: string; name: string }] : [];
+}
+
+/** 把任意形态（旧单对象/新数组）的连接配置归一化为数组结构 */
+export function normalizeConnections(cfg: any): ProjectConfig {
+  return {
+    connections: {
+      db: toNamedList<DbConnectionConfig>(cfg?.connections?.db, '默认数据库'),
+      kingdee: toNamedList<KingdeeConnectionConfig>(cfg?.connections?.kingdee, '默认金蝶'),
+    },
+  };
+}
+
+/** 按 id 取数据库配置；id 缺省取列表首个 */
+export function findDbConfig(cfg: ProjectConfig | undefined, id?: string): NamedDbConfig | undefined {
+  const list = cfg?.connections?.db || [];
+  return id ? list.find((c) => c.id === id) || list[0] : list[0];
+}
+
+/** 按 id 取金蝶配置；id 缺省取列表首个 */
+export function findKingdeeConfig(cfg: ProjectConfig | undefined, id?: string): NamedKingdeeConfig | undefined {
+  const list = cfg?.connections?.kingdee || [];
+  return id ? list.find((c) => c.id === id) || list[0] : list[0];
+}
+
 export interface ProjectConfig {
   connections: {
-    db?: DbConnectionConfig;
-    kingdee?: KingdeeConnectionConfig;
+    db?: NamedDbConfig[];
+    kingdee?: NamedKingdeeConfig[];
   };
 }
 
 export function emptyProjectConfig(): ProjectConfig {
-  return { connections: {} };
+  return { connections: { db: [], kingdee: [] } };
 }
 
 export type HostCommand =
@@ -203,6 +253,8 @@ export interface DbConnInfo {
   secretKey?: string;
   /** 所属项目：有值时密码从该项目的凭据里读（Credential 按项目隔离） */
   projectId?: string;
+  /** 多连接配置：定位是项目里的哪一条（缺省取列表首个） */
+  configId?: string;
 }
 
 export type WebviewMsg = WvRequest | WvResponse | WvPush;
