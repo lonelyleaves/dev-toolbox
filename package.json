@@ -1,9 +1,9 @@
 {
   "name": "dev-toolbox",
   "displayName": "DevToolbox 开发者工具箱",
-  "description": "时间戳 / Cron / Diff / cURL / JSON / Java转JSON / 正则 / 数据字典 / SQL格式化 / SQL还原 / 二维码 / 编码转换 / 颜色哈希 / UUID 一体化开发者工具箱",
+  "description": "开发者工具箱：JSON 格式化/转换、时间戳、Cron、正则、文本对比、cURL、SQL 格式化、数据字典(PDM/数据库/金蝶)、Base64/编码转换、哈希/UUID、颜色、二维码",
   "version": "0.6.9",
-  "publisher": "local",
+  "publisher": "lonelyleaves",
   "author": "Leo",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -11,12 +11,57 @@
     "vscode": "^1.85.0"
   },
   "categories": [
+    "Formatters",
+    "Visualization",
     "Other"
+  ],
+  "keywords": [
+    "json",
+    "json formatter",
+    "json 格式化",
+    "timestamp",
+    "时间戳",
+    "cron",
+    "regex",
+    "正则",
+    "diff",
+    "curl",
+    "sql formatter",
+    "sql 格式化",
+    "database",
+    "data dictionary",
+    "数据字典",
+    "pdm",
+    "powerdesigner",
+    "ddl",
+    "er diagram",
+    "base64",
+    "jwt",
+    "encode",
+    "编码转换",
+    "hash",
+    "uuid",
+    "color",
+    "qrcode",
+    "二维码",
+    "toolbox",
+    "developer tools",
+    "开发者工具",
+    "kingdee",
+    "金蝶"
   ],
   "main": "./dist/extension.js",
   "repository": {
     "type": "git",
     "url": "https://github.com/lonelyleaves/dev-toolbox"
+  },
+  "bugs": {
+    "url": "https://github.com/lonelyleaves/dev-toolbox/issues"
+  },
+  "homepage": "https://github.com/lonelyleaves/dev-toolbox#readme",
+  "galleryBanner": {
+    "color": "#0f172a",
+    "theme": "dark"
   },
   "activationEvents": [],
   "contributes": {
@@ -282,7 +327,10 @@
         },
         "devToolbox.kingdee.argStyle": {
           "type": "string",
-          "enum": ["parameters", "named"],
+          "enum": [
+            "parameters",
+            "named"
+          ],
           "default": "named",
           "description": "金蝶接口参数风格：named=命名对象形式 {FormId:...}（官方默认），parameters=数组形式 [formId]"
         },

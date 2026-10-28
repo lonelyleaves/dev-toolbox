@@ -43,3 +43,9 @@ node_modules/codepage/**
 # sourcemap 不随 vsix 分发
 dist/**/*.map
 dist/webview/**/*.map
+
+# 开发/CI 产物不入包
+.github/**
+docs/**
+.patch-*.cjs
+.patch-pkg.cjs

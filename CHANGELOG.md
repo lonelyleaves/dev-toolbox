@@ -1,5 +1,27 @@
 # CHANGELOG
 
+## [Unreleased]
+
+### Added
+- **金蝶数据字典 HTML 导入**：支持 UTF-16LE/BE 与 UTF-8 BOM 自动识别；枚举值从「默认值」列拆出并并入字段注释（`标题；枚举：Z=暂存,…`）；字段表缺失的主键从主外键表补出
+- **金蝶 WebAPI 按字段 TableName 拆表**：主表 / 拆分表（`_F` 等）/ 多语言表（`_L`）分表生成；`_L` 表补 `FPKID`(PK) + 业务主键 + `FLOCALEID`；WebAPI 枚举写入注释，显示名不再被枚举污染
+- **跨系统类型归一比较**：新增 `type-canonical.ts`，按「类型族 + 规范基类型 + 参数」比较（int/bigint、varchar/char、datetime/datetime2、NUMBER 精度等），不再按类型字符串直比
+- **比对修复新增选项**：忽略整型宽度（WebAPI 基线默认开启）；元数据基线只校验表单字段，字典多出的系统字段不反向报缺；WebAPI 基线跳过索引/外键比对
+- 表列表新增排序：按名称（中文拼音 + 数字自然序）/ 按表名 / 按字段数
+
+### Changed
+- 比对差异标签改为「变更 / 基线独有 / 字典独有」，并补充方向说明；修复 SQL 改用基线方言（SQL Server 输出 `[...]`，`ALTER COLUMN` 不再携带非法的 `DEFAULT`）
+- 基线来源与连接信息随基线持久：切到别的页签再回来，不再重置为数据库默认值
+- 上架元数据：`publisher` 改为 `lonelyleaves`，补齐 33 个 keywords、categories、bugs/homepage/galleryBanner；`.vscodeignore` 排除 docs/.github/临时脚本
+
+### Fixed
+- 数据字典搜索框无法输入：输入框绑定即时值（`kwInput`）、过滤使用防抖值（`activeKeyword`），两者分离
+- SQL Server 拉取报 `The column 'column_id' was specified multiple times for 'kc'`：主键判定改用 `EXISTS` 子查询
+- 金蝶登录改为官方报文（ValidateUser 命名对象 / LoginByAppSecret 包装对象），补充 401/403 排查指引；`QueryBusinessInfo` 入参改为 `{ parameters: [{ FormId }] }`，服务端错误报文直接透出
+
+### Tests
+- 新增金蝶 HTML、WebAPI 拆表/枚举、类型归一、比对范围/元数据基线、搜索输入等回归用例；累计 386 例通过
+
 ## [0.6.9] - 2026-10-27
 
 ### Added
