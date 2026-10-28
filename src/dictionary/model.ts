@@ -8,7 +8,7 @@
 export type ChangeTag = 'added' | 'modified' | 'deleted' | undefined;
 
 /** 导入来源类型 */
-export type SourceKind = 'pdm' | 'ddl' | 'md' | 'excel' | 'db' | 'kingdee' | 'dtcat';
+export type SourceKind = 'pdm' | 'ddl' | 'md' | 'excel' | 'db' | 'kingdee' | 'kingdee-html' | 'dtcat';
 
 /** 导入来源（一个项目可有多个来源，合并成一份字典） */
 export interface DictSource {
@@ -215,7 +215,9 @@ export function normalizeType(type: string): string {
   };
   const m = t.match(/^(int|integer|smallint|bigint|tinyint|mediumint)\(\d+\)$/);
   if (m) t = m[1];
-  return intAlias[t] ?? t;
+  const out = intAlias[t] ?? t;
+  // char/nchar/binary 省略长度等价于长度 1（SQL Server 默认），避免 char vs char(1) 假差异
+  return /^(char|nchar|binary)$/.test(out) ? `${out}(1)` : out;
 }
 
 /** 类型是否兼容（宽松比较：varchar(64) vs varchar(128) 视为变更但同族） */

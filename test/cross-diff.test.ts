@@ -41,7 +41,8 @@ function mkOther(name: string) {
 describe('跨项目比对语义', () => {
   const cur = mk('当前');
   const other = mkOther('对方');
-  const items = diffDictionaries(cur, other);
+  // 跨项目比对是两份完整字典对比，用全量语义
+  const items = diffDictionaries(cur, other, { fullCompare: true });
 
   const byKind = (k: string) => items.filter((x) => x.kind === k);
   const names = (k: string, level?: string) =>
