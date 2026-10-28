@@ -121,7 +121,7 @@ export function JsonPage({ prefill }: { prefill?: Prefill }) {
             <Btn onClick={() => doAction((d) => JSON.stringify(d, Object.keys(d as any ?? {}).sort(), 2))}>Key 排序</Btn>
             <Btn onClick={() => { setInput(toYaml(parsed.data!)); }}>转 YAML 编辑</Btn>
           </div>
-          <pre class="out">{output}</pre>
+          <CodeArea value={output} readOnly minHeight={160} />
           <CopyBtn text={() => output} label="复制结果" />
         </div>
       )}
@@ -136,7 +136,7 @@ export function JsonPage({ prefill }: { prefill?: Prefill }) {
               convertFmt === 'yaml' ? toYaml(d) : convertFmt === 'xml' ? toXml(d) : toCsv(d))}>转换</Btn>
             {convertFmt === 'csv' && <Btn onClick={() => { try { setInput(JSON.stringify(csvToJson(input), null, 2)); } catch { setError('CSV 解析失败'); } }}>CSV → JSON（用左侧输入）</Btn>}
           </div>
-          <pre class="out">{output}</pre>
+          <CodeArea value={output} readOnly minHeight={160} />
           <CopyBtn text={() => output} label="复制结果" />
         </div>
       )}
@@ -150,7 +150,7 @@ export function JsonPage({ prefill }: { prefill?: Prefill }) {
             </select>
             <Btn primary onClick={() => doAction((d) => (generateTypes(d) as any)[codegenLang])}>生成</Btn>
           </div>
-          <pre class="out">{output}</pre>
+          <CodeArea value={output} readOnly minHeight={160} />
           <CopyBtn text={() => output} label="复制代码" />
         </div>
       )}
@@ -160,7 +160,7 @@ export function JsonPage({ prefill }: { prefill?: Prefill }) {
           <div class="toolbar">
             <input type="text" class="mono grow" value={path} onInput={(e) => setPath((e.target as HTMLInputElement).value)} placeholder="$.a.b[0].c" />
           </div>
-          <pre class="out">{output}</pre>
+          <CodeArea value={output} readOnly minHeight={160} />
           <CopyBtn text={() => output} label="复制结果" />
         </div>
       )}
@@ -178,9 +178,13 @@ export function JsonPage({ prefill }: { prefill?: Prefill }) {
                 <span class="badge deleted">-{diffOut.stats!.removed}</span>
                 <span class="badge modified">~{diffOut.stats!.changed}</span>
               </div>
-              <pre class="out">{diffOut.pairs!.filter((p: any) => p.type !== 'equal').map((p: any) =>
-                `${p.type === 'ins' ? '+' : p.type === 'del' ? '-' : '~'} ${(p.right || p.left || []).map((w: any) => w.text).join('')}`
-              ).join('\n') || '两份 JSON 格式化后完全一致'}</pre>
+              <CodeArea
+                readOnly
+                minHeight={120}
+                value={diffOut.pairs!.filter((p: any) => p.type !== 'equal').map((p: any) =>
+                  `${p.type === 'ins' ? '+' : p.type === 'del' ? '-' : '~'} ${(p.right || p.left || []).map((w: any) => w.text).join('')}`
+                ).join('\n') || '两份 JSON 格式化后完全一致'}
+              />
             </div>
           )}
         </div>

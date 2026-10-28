@@ -263,6 +263,11 @@ textarea.code {
   border: none;
   box-shadow: none;
 }
+/* 只读结果区：保留行号与选择复制，不显示可编辑光标 */
+.code-wrap > textarea.code.readonly {
+  cursor: default;
+  resize: none;
+}
 .code-gutter {
   flex: none;
   min-width: 36px;

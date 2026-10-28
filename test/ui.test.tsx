@@ -904,6 +904,29 @@ describe('RepairPanel 基线（数据库 4 类型 / 金蝶 WebAPI / JSON）', ()
   });
 });
 
+describe('JSON 工具箱输出行号', () => {
+  it('美化后的结果使用只读代码区，并显示行号', async () => {
+    const { JsonPage } = await import('../src/webview/pages/JsonPage');
+    const { container, unmount } = await mount(h(JsonPage, {}));
+    const beautify = [...container.querySelectorAll('button')].find((b) => b.textContent === '美化');
+    expect(beautify).toBeTruthy();
+    await act(async () => { beautify!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    await flush();
+
+    const areas = [...container.querySelectorAll('textarea.code')] as HTMLTextAreaElement[];
+    expect(areas.length).toBeGreaterThanOrEqual(2);
+    const out = areas[areas.length - 1];
+    expect(out.readOnly).toBe(true);
+    expect(out.value.split('\n').length).toBeGreaterThan(1);
+
+    const gutters = [...container.querySelectorAll('.code-gutter')];
+    const lines = (gutters[gutters.length - 1].textContent || '').trim().split('\n');
+    expect(lines[0]).toBe('1');
+    expect(lines.length).toBeGreaterThan(1);
+    await unmount();
+  });
+});
+
 describe('parseDtcat（.dtcat.json 校验解析）', () => {
   it('合法内容返回字典', async () => {
     const { parseDtcat } = await import('../src/webview/pages/DictionaryPage');

@@ -88,13 +88,15 @@ export function clipPrefill(text: string, max = PREFILL_MAX_CHARS): string {
  */
 export function CodeArea(p: {
   value: string;
-  onInput: (v: string) => void;
+  onInput?: (v: string) => void;
   placeholder?: string;
   /** 最小高度（px），默认沿用 .code 的 140px */
   minHeight?: number;
   rows?: number;
   /** 关闭行号栏（内容很短的场景） */
   gutter?: boolean;
+  /** 只读：用于展示结果（仍保留行号与选择/复制） */
+  readOnly?: boolean;
   class?: string;
   style?: string;
 }) {
@@ -159,6 +161,7 @@ export function CodeArea(p: {
   };
 
   const onPaste = (e: JSX.TargetedClipboardEvent<HTMLTextAreaElement>) => {
+    if (p.readOnly || !p.onInput) return;
     const raw = e.clipboardData?.getData('text/plain');
     if (raw == null) return;
     const text = normalizeInput(raw);
@@ -185,13 +188,14 @@ export function CodeArea(p: {
       )}
       <textarea
         ref={taRef}
-        class={`code${p.class ? ` ${p.class}` : ''}`}
+        class={`code${p.readOnly ? ' readonly' : ''}${p.class ? ` ${p.class}` : ''}`}
         style={p.style}
         rows={p.rows}
         value={p.value}
         placeholder={p.placeholder}
+        readOnly={p.readOnly}
         spellcheck={false}
-        onInput={(e) => p.onInput((e.target as HTMLTextAreaElement).value)}
+        onInput={(e) => p.onInput?.((e.target as HTMLTextAreaElement).value)}
         onPaste={onPaste}
         onScroll={syncScroll}
       />
