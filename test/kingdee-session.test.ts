@@ -12,8 +12,12 @@ vi.mock('vscode', () => ({
   workspace: { getConfiguration: () => ({ get: () => undefined }) },
 }));
 
+/** 记录每次 HTTP 请求的 url 与 body，用于断言登录报文形态 */
+const sent: { url: string; body: string }[] = [];
+
 function mockLoginResponse(opts: { body?: string; setCookie?: string[] }) {
   (httpMod.doHttpRequest as any).mockImplementation(async (p: any) => {
+    sent.push({ url: String(p.url), body: String(p.body ?? '') });
     if (String(p.url).includes('AuthService') || p.url.includes('ValidateUser')) {
       return {
         status: 200,
@@ -87,5 +91,38 @@ describe('金蝶登录无会话 Cookie 的警告与数据链路', () => {
     expect(r.ok).toBe(false);
     expect(r.error).toContain('鉴权被拒（HTTP 401）');
     expect(r.error).toContain('附加请求头');
+  });
+
+  it('登录请求体是官方命名对象（密码模式 ValidateUser）', async () => {
+    sent.length = 0;
+    mockLoginResponse({});
+    await kingdeeFetchMetadata(['BD_MATERIAL'], { projectId: 'p1', password: 'pwd' }, undefined as any, (() => ({ connections: { kingdee: [pc] } })) as any);
+    const req = sent.find((r) => r.url.includes('ValidateUser'))!;
+    expect(req).toBeTruthy();
+    const body = JSON.parse(req.body);
+    expect(Array.isArray(body)).toBe(false);
+    expect(body).toEqual({ acctID: pc.dbId, username: pc.user, password: 'pwd', lcid: 2052 });
+  });
+
+  it('有 appSecret 且无密码时：走 LoginByAppSecret，parameters 为 JSON 字符串', async () => {
+    sent.length = 0;
+    mockLoginResponse({});
+    await kingdeeFetchMetadata(['BD_MATERIAL'], { projectId: 'p1', appSecret: 'sec' }, undefined as any, (() => ({ connections: { kingdee: [pc] } })) as any);
+    const req = sent.find((r) => r.url.includes('LoginByAppSecret'))!;
+    expect(req).toBeTruthy();
+    const body = JSON.parse(req.body);
+    expect(body.format).toBe(1);
+    expect(typeof body.parameters).toBe('string');
+    expect(JSON.parse(body.parameters)).toEqual([pc.dbId, pc.user, pc.appId, 'sec', 2052]);
+  });
+
+  it('元数据请求体是官方 { parameters: [{ FormId }] }', async () => {
+    sent.length = 0;
+    mockLoginResponse({});
+    await kingdeeFetchMetadata(['BD_MATERIAL'], { projectId: 'p1', password: 'pwd' }, undefined as any, (() => ({ connections: { kingdee: [pc] } })) as any);
+    const req = sent.find((r) => r.url.includes('QueryBusinessInfo'))!;
+    expect(req).toBeTruthy();
+    const body = JSON.parse(req.body);
+    expect(body.parameters).toEqual([{ FormId: 'BD_MATERIAL' }]);
   });
 });

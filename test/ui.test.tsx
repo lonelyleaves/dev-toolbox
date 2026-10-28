@@ -305,6 +305,42 @@ describe('表列表：虚拟滚动与筛选', () => {
     expect(opts.some((t) => t?.includes('MFG.pdm'))).toBe(true);
     await unmount();
   });
+
+  it('搜索框显示即时值，列表按防抖值过滤（输入不被旧值覆盖）', async () => {
+    const { TableList } = await import('../src/webview/pages/dictionary/panels');
+    const { container, unmount } = await mount(h(TableList, {
+      dict: { name: 'd', tables: many } as any,
+      tables: many, sources: [], selected: '', onSelect: () => {}, onKeyword: () => {},
+      keyword: 'T_TAB_1', activeKeyword: 'T_TAB_2',
+    }));
+    const input = container.querySelector('input[type="text"]') as HTMLInputElement;
+    expect(input.value).toBe('T_TAB_1'); // 输入框回显即时输入
+    const text = container.textContent || '';
+    expect(text).toContain('T_TAB_2');    // 列表按防抖后的值过滤
+    expect(text).not.toContain('T_TAB_1');
+    await unmount();
+  });
+
+  it('默认按名称排序：中文按拼音、编号按数字自然序', async () => {
+    const { TableList } = await import('../src/webview/pages/dictionary/panels');
+    const tables = [
+      { name: 'T_B', code: '测试乙', columns: [], indexes: [], foreignKeys: [] },
+      { name: 'T_10', code: '表10', columns: [], indexes: [], foreignKeys: [] },
+      { name: 'T_A', code: '测试甲', columns: [], indexes: [], foreignKeys: [] },
+      { name: 'T_2', code: '表2', columns: [], indexes: [], foreignKeys: [] },
+    ];
+    const { container, unmount } = await mount(h(TableList, {
+      tables, sources: [], selected: '', onSelect: () => {}, keyword: '', onKeyword: () => {},
+    }));
+    const names = [...container.querySelectorAll('.vrow .vname')].map((n) => n.textContent);
+    expect(names).toEqual(['T_2', 'T_10', 'T_A', 'T_B']);
+    // 排序下拉存在
+    const opts = [...container.querySelectorAll('option')].map((o) => o.textContent);
+    expect(opts).toContain('按名称');
+    expect(opts).toContain('按表名');
+    expect(opts).toContain('按字段数');
+    await unmount();
+  });
 });
 
 describe('同步流程与连接状态指示', () => {
@@ -639,6 +675,25 @@ describe('RepairPanel 基线（数据库 4 类型 / 金蝶 WebAPI / JSON）', ()
     document.body.removeChild(c);
   });
 
+  it('数据库分支：带标签的表单网格（主机/端口/用户名/密码/库名）', async () => {
+    const c = await mountRepair(undefined);
+    const flds = [...c.querySelectorAll('.form-grid .fld')];
+    expect(flds.length).toBe(5);
+    const labels = flds.map((f) => (f.querySelector('span')?.textContent || ''));
+    expect(labels).toEqual(expect.arrayContaining(['主机', '端口', '用户名', '密码']));
+    expect(labels.some((t) => t.includes('库名'))).toBe(true);
+    document.body.removeChild(c);
+  });
+
+  it('金蝶 WebAPI：共享表单也用带标签网格', async () => {
+    const c = await mountRepair(undefined);
+    await switchKind(c, '金蝶 WebAPI');
+    const labels = [...c.querySelectorAll('.form-grid .fld > span')].map((s) => s.textContent || '');
+    expect(labels.some((t) => t.includes('表单标识'))).toBe(true);
+    expect(labels.some((t) => t.includes('appSecret'))).toBe(true);
+    document.body.removeChild(c);
+  });
+
   it('有项目 DB 配置：按 client 预填连接行，出现「项目配置」下拉；不匹配类型不串扰', async () => {
     const c = await mountRepair([{ id: 'd1', name: '生产', client: 'mssql', host: 'prod.example.cn', port: 1433, user: 'sa', database: 'ERP_DB' }]);
     const vals = inputs(c).map((i) => i.value);
@@ -673,6 +728,25 @@ describe('RepairPanel 基线（数据库 4 类型 / 金蝶 WebAPI / JSON）', ()
     expect(inputs(c).some((i) => (i.placeholder || '').includes('表单标识'))).toBe(true);
     expect(inputs(c).some((i) => i.placeholder === 'host')).toBe(false);
     document.body.removeChild(c);
+  });
+
+  it('重新挂载时从基线恢复来源（WebAPI），不回到数据库默认值', async () => {
+    const { RepairPanel } = await import('../src/webview/pages/DictionaryPage');
+    const baseline = { dict: { name: 'b', tables: [] }, kind: 'webapi', label: 'bd_stock' } as any;
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    await act(async () => {
+      render(h(RepairPanel, {
+        dict: { name: 'd', tables: [] } as any, setDict: () => {},
+        baseline, setBaseline: () => {}, projectId: 'p1',
+      }), container);
+    });
+    await flush();
+    const cat = container.querySelector('select[name="dt-baseline-cat"]') as HTMLSelectElement;
+    expect(cat.value).toBe('webapi');
+    // 数据库二级类型下拉不应出现
+    expect(container.querySelector('select[name="dt-baseline-kind"]')).toBeNull();
+    document.body.removeChild(container);
   });
 
   it('切到 JSON 文件：出「选择 .dtcat.json」按钮', async () => {
@@ -736,6 +810,96 @@ describe('RepairPanel 基线（数据库 4 类型 / 金蝶 WebAPI / JSON）', ()
     expect(baselined).toBeTruthy();
     expect(baselined.kind).toBe('json');
     expect(baselined.dict.tables[0].name).toBe('T_P');
+    document.body.removeChild(container);
+  });
+
+  it('比对结果：默认只比对基线表，显示范围/降噪开关与按表分组', async () => {
+    const { RepairPanel } = await import('../src/webview/pages/DictionaryPage');
+    const dict = { name: 'd', tables: [
+      { name: 'T_A', columns: [{ name: 'FID', type: 'bigint' }], indexes: [], foreignKeys: [] },
+      { name: 'T_B', columns: [{ name: 'FID', type: 'int' }], indexes: [], foreignKeys: [] },
+    ] } as any;
+    const baseline = { dict: { name: 'b', tables: [
+      { name: 'T_A', columns: [{ name: 'FID', type: 'int' }], indexes: [], foreignKeys: [] },
+    ] }, kind: 'json', label: 'x.json' } as any;
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    await act(async () => { render(h(RepairPanel, { dict, setDict: () => {}, baseline, setBaseline: () => {}, projectId: 'p1' }), container); });
+    await flush();
+    const t = container.textContent || '';
+    expect(t).toContain('仅基线返回的表');
+    expect(t).toContain('全量比对');
+    expect(t).toContain('忽略注释差异');
+    expect(t).toContain('忽略整型宽度');
+    expect(t).toContain('基线独有');
+    expect(t).toContain('字典独有');
+    // 多维度筛选控件存在
+    expect(t).toContain('级别');
+    expect(t).toContain('变更项');
+    expect(t).toContain('筛选');
+    // 基线外的 T_B 不参与比对
+    expect(t).not.toContain('T_B');
+    // 按表分组：T_A 分组存在
+    expect([...container.querySelectorAll('details summary')].some((s) => (s.textContent || '').includes('T_A'))).toBe(true);
+    document.body.removeChild(container);
+  });
+
+  it('筛选：按变更项过滤，只剩类型差异', async () => {
+    const { RepairPanel } = await import('../src/webview/pages/DictionaryPage');
+    const dict = { name: 'd', tables: [
+      { name: 'T_A', columns: [
+        { name: 'FID', type: 'bigint' },
+        { name: 'FNAME', type: 'nvarchar(50)', comment: '新名' },
+      ], indexes: [], foreignKeys: [] },
+    ] } as any;
+    const baseline = { dict: { name: 'b', tables: [
+      { name: 'T_A', columns: [
+        { name: 'FID', type: 'int' },
+        { name: 'FNAME', type: 'nvarchar(50)', comment: '旧名' },
+      ], indexes: [], foreignKeys: [] },
+    ] }, kind: 'json', label: 'x.json' } as any;
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    await act(async () => { render(h(RepairPanel, { dict, setDict: () => {}, baseline, setBaseline: () => {}, projectId: 'p1' }), container); });
+    await flush();
+    const diffText = () => [...container.querySelectorAll('details')].map((d) => d.textContent || '').join(' ');
+    // 默认两条差异都在（只看差异分组，不看下方 SQL）
+    expect(diffText()).toContain('FID');
+    expect(diffText()).toContain('FNAME');
+    // 找到「变更项」下拉（选项含 value=类型），选“类型”
+    const sel = [...container.querySelectorAll('select')].find((s) => [...s.options].some((o) => o.value === '类型'))!;
+    expect(sel).toBeTruthy();
+    sel.value = '类型';
+    sel.dispatchEvent(new Event('input', { bubbles: true }));
+    await flush();
+    expect(diffText()).toContain('FID');
+    expect(diffText()).not.toContain('FNAME');
+    document.body.removeChild(container);
+  });
+
+  it('WebAPI 基线：默认勾选忽略可空/默认值/注释，FAllowATPCheck 类假差异消失', async () => {
+    const { RepairPanel } = await import('../src/webview/pages/DictionaryPage');
+    const dict = { name: 'd', tables: [
+      { name: 't_BD_Stock', columns: [
+        { name: 'FAllowATPCheck', type: 'char(1)', nullable: false, comment: '', defaultValue: '0' },
+      ], indexes: [], foreignKeys: [] },
+    ] } as any;
+    const baseline = { dict: { name: 'b', tables: [
+      { name: 't_BD_Stock', columns: [
+        { name: 'FAllowATPCheck', type: 'char', nullable: true, comment: '允许ATP检查；界面已隐藏', defaultValue: 'True' },
+      ], indexes: [], foreignKeys: [] },
+    ] }, kind: 'webapi', label: 'bd_stock' } as any;
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    await act(async () => { render(h(RepairPanel, { dict, setDict: () => {}, baseline, setBaseline: () => {}, projectId: 'p1' }), container); });
+    await flush();
+    const cb = (label: string) => [...container.querySelectorAll('label')].find((l) => (l.textContent || '').includes(label))?.querySelector('input') as HTMLInputElement;
+    expect(cb('忽略注释差异')?.checked).toBe(true);
+    expect(cb('忽略默认值差异')?.checked).toBe(true);
+    expect(cb('忽略可空差异')?.checked).toBe(true);
+    // char vs char(1) 等价 + 三项忽略 → 无差异
+    expect(container.textContent).toContain('差异 0');
+    expect(container.textContent).toContain('无差异');
     document.body.removeChild(container);
   });
 });

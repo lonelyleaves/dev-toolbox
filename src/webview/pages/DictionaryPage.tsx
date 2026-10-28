@@ -7,6 +7,7 @@ import { ProjectBar, SourcesPanel, MergePanel, KingdeePanel, KingdeeWebApiForm, 
 import { parsePdm } from '../../dictionary/pdm';
 import { parseDdl } from '../../dictionary/ddl';
 import { parseMarkdownDict } from '../../dictionary/markdown';
+import { parseKingdeeHtml } from '../../dictionary/kingdee-html';
 import { emptyProjectConfig, findDbConfig, findKingdeeConfig, type ProjectConfig, type NamedDbConfig, type NamedKingdeeConfig } from '../../core/messaging';
 import { diffDictionaries, generateFixSql, mergeBaseIntoTarget, diffReportMarkdown, DiffItem } from '../../dictionary/diffengine';
 import { lintDictionary, applyFixes, suggestComments, acceptSuggestions, Violation, NamingRules } from '../../dictionary/naming';
@@ -334,6 +335,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
       if (ext === 'pdm') nd = parsePdm(r.content);
       else if (ext === 'sql') nd = parseDdl(r.content, /postgres|pg/i.test(s.path) ? 'postgres' : 'mysql');
       else if (ext === 'md') nd = parseMarkdownDict(r.content);
+      else if (ext === 'html' || ext === 'htm') nd = parseKingdeeHtml(r.content);
     } catch { nd = null; }
     if (!nd || nd.tables.length === 0) {
       host.showMessage('warn', '重新解析未得到表，来源保持不变').catch(() => undefined);
@@ -364,8 +366,9 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
     if (ext === 'pdm') return importPdmWith(f);
     if (ext === 'sql') return importDdlWith(f);
     if (ext === 'md') return importMdWith(f);
+    if (ext === 'html' || ext === 'htm') return importHtmlWith(f);
     if (ext === 'json') return importDtcatWith(f);
-    host.showMessage('warn', `暂不支持的文件类型 .${ext}（支持 pdm / sql / md / json）`).catch(() => undefined);
+    host.showMessage('warn', `暂不支持的文件类型 .${ext}（支持 pdm / sql / md / html / json）`).catch(() => undefined);
   };
 
   const importPdmWith = async (f: { name: string; path?: string; content: string }) => {
@@ -382,6 +385,11 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
     const d = parseMarkdownDict(f.content);
     d.name = f.name.replace(/\.md$/i, '');
     applyImport(d, mkSource('md', f.name, f.path, d.tables.length));
+  };
+  const importHtmlWith = async (f: { name: string; path?: string; content: string }) => {
+    const d = parseKingdeeHtml(f.content);
+    d.name = f.name.replace(/\.html?$/i, '');
+    applyImport(d, mkSource('kingdee-html', f.name, f.path, d.tables.length));
   };
   const importDtcatWith = async (f: { name: string; path?: string; content: string }) => {
     try {
@@ -460,6 +468,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
   const importPdm = async () => { const f = await host.openTextFile(); if (f) await importPdmWith(f); };
   const importDdl = async () => { const f = await host.openTextFile(); if (f) await importDdlWith(f); };
   const importMd = async () => { const f = await host.openTextFile(); if (f) await importMdWith(f); };
+  const importHtml = async () => { const f = await host.openTextFile(); if (f) await importHtmlWith(f); };
   const importExcel = async () => {
     const f = await host.openBinaryFile();
     if (!f) return;
@@ -564,6 +573,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
             <Btn primary onClick={importPdm}>导入 PDM (PowerDesigner)</Btn>
             <Btn primary onClick={importDdl}>导入 DDL (.sql)</Btn>
             <Btn primary onClick={importMd}>导入 Markdown 字典</Btn>
+            <Btn primary onClick={importHtml}>导入金蝶 HTML 字典</Btn>
             <Btn primary onClick={importExcel}>导入 Excel 字典</Btn>
             <Btn onClick={importDtcat}>加载 .dtcat.json</Btn>
           </div>
@@ -635,6 +645,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
         <Btn onClick={importPdm} title="导入 PowerDesigner .pdm 文件">PDM</Btn>
         <Btn onClick={importDdl} title="导入 DDL 建表语句 (.sql)">DDL</Btn>
         <Btn onClick={importMd} title="导入 Markdown 格式数据字典">MD</Btn>
+        <Btn onClick={importHtml} title="导入金蝶数据字典 HTML（枚举并入注释）">HTML</Btn>
         <Btn onClick={importExcel} title="导入 Excel 数据字典 (.xlsx/.xls)">Excel</Btn>
         <Btn onClick={saveDtcat} title="保存为 .dtcat.json 文件（可进 Git 版本管理）">保存 .dtcat.json</Btn>
         <Btn onClick={() => { setDict(null); setBaseline(null); host.persistState('dict:last', null).catch(() => undefined); }} title="关闭字典并清除缓存">关闭</Btn>
@@ -659,11 +670,12 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
         <div class="split">
           <TableList
             dict={dict}
-                  tables={dict.tables}
+            tables={dict.tables}
             sources={dict.sources || []}
             selected={selected}
             onSelect={(name) => setSelected(name)}
-            keyword={keyword}
+            keyword={kwInput}
+            activeKeyword={keyword}
             onKeyword={(v) => setKwInput(v)}
           />
           <div class="right">
@@ -992,7 +1004,16 @@ function LintPanel({ dict, setDict, naming: initialRules }: { dict: DictionaryMo
 export type BaselineKind = 'sqlserver' | 'mysql' | 'postgres' | 'oracle' | 'webapi' | 'json';
 /** 一级基线类别：数据库（下再选具体 DB）/ WebAPI / JSON */
 export type BaselineCategory = 'database' | 'webapi' | 'json';
-export interface RepairBaseline { dict: DictionaryModel; kind: BaselineKind; label: string; }
+export interface RepairBaseline {
+  dict: DictionaryModel;
+  kind: BaselineKind;
+  label: string;
+  /** 拉取时的连接信息：切到别的页签再回来时恢复表单（不含密码） */
+  conn?: DbConnInfo;
+  kdConfigId?: string;
+  jsonPicked?: string;
+  jsonMode?: 'file' | 'paste';
+}
 
 /** 数据库基线类型 → client / 默认端口 / 默认用户 */
 const DB_BASELINE_KINDS: { id: BaselineKind; label: string; client: DbConnInfo['client']; port: number; user: string }[] = [
@@ -1036,20 +1057,97 @@ export function RepairPanel({ dict, setDict, baseline, setBaseline, dbConfigs, k
   baseline: RepairBaseline | null; setBaseline: (b: RepairBaseline | null) => void;
   dbConfigs?: NamedDbConfig[]; kdConfigs?: NamedKingdeeConfig[]; projectId?: string | null;
 }) {
-  const [kind, setKind] = useState<BaselineKind>('sqlserver');
+  const initialKind = baseline?.kind ?? 'sqlserver';
+  const [kind, setKind] = useState<BaselineKind>(initialKind);
   // 记住数据库子类型：切到 WebAPI/JSON 再切回时不丢上次选择
-  const [lastDbKind, setLastDbKind] = useState<BaselineKind>('sqlserver');
-  const [info, setInfo] = useState<DbConnInfo>(() => connFor('sqlserver', dbConfigs));
-  const [jsonPicked, setJsonPicked] = useState('');
-  const [jsonMode, setJsonMode] = useState<'file' | 'paste'>('file');
+  const [lastDbKind, setLastDbKind] = useState<BaselineKind>(isDbKind(initialKind) ? initialKind : 'sqlserver');
+  const [info, setInfo] = useState<DbConnInfo>(() => (baseline?.conn ? { ...baseline.conn, password: '' } : connFor(initialKind, dbConfigs)));
+  const [jsonPicked, setJsonPicked] = useState(baseline?.jsonPicked || '');
+  const [jsonMode, setJsonMode] = useState<'file' | 'paste'>(baseline?.jsonMode || 'file');
   const [jsonText, setJsonText] = useState('');
-  const [kdConfigId, setKdConfigId] = useState<string>(kdConfigs?.[0]?.id || '');
+  const [kdConfigId, setKdConfigId] = useState<string>(baseline?.kdConfigId || kdConfigs?.[0]?.id || '');
   const [includeDangerous, setIncludeDangerous] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  // 比对范围与降噪：默认只比对基线（WebAPI/JSON/库）返回的表
+  const [fullCompare, setFullCompare] = useState(false);
+  const [ignoreComments, setIgnoreComments] = useState(false);
+  const [ignoreDefaults, setIgnoreDefaults] = useState(false);
+  const [ignoreNullable, setIgnoreNullable] = useState(false);
+  // 金蝶 WebAPI 的 ID 字段是 bigint，PDM 常写 int；默认视为同一类型，避免满屏假差异
+  const [ignoreIntegerWidth, setIgnoreIntegerWidth] = useState(false);
+  // 切页签会卸载本面板；基线本身存在父组件，挂载时从它恢复来源/连接，避免回到默认值
+  useEffect(() => {
+    if (!baseline) return;
+    setKind(baseline.kind);
+    if (isDbKind(baseline.kind)) {
+      setLastDbKind(baseline.kind);
+      setInfo(baseline.conn ? { ...baseline.conn, password: '' } : connFor(baseline.kind, dbConfigs));
+    }
+    setKdConfigId(baseline.kdConfigId || kdConfigs?.[0]?.id || '');
+    setJsonPicked(baseline.jsonPicked || '');
+    setJsonMode(baseline.jsonMode || 'file');
+  }, [baseline?.kind, baseline?.label]);
 
-  const items: DiffItem[] = useMemo(() => (baseline ? diffDictionaries(baseline.dict, dict) : []), [baseline, dict]);
-  const fixSql = useMemo(() => (baseline ? generateFixSql(baseline.dict, dict, includeDangerous) : []), [baseline, dict, includeDangerous]);
+  // 金蝶 WebAPI 元数据不是物理 schema：MustInput 不等于可空性，DefValue 是界面默认值，注释是 UI 标题；
+  // 默认忽略这三类不可靠字段，避免 FAllowATPCheck 这类假差异；用户可手动关闭。
+  useEffect(() => {
+    const webapi = baseline?.kind === 'webapi';
+    setIgnoreComments(webapi);
+    setIgnoreDefaults(webapi);
+    setIgnoreNullable(webapi);
+    setIgnoreIntegerWidth(webapi);
+  }, [baseline?.kind, baseline?.label]);
+  const [kindFilter, setKindFilter] = useState<'all' | 'added' | 'removed' | 'modified' | 'dangerous'>('all');
+  const [levelFilter, setLevelFilter] = useState<'all' | 'table' | 'column' | 'index' | 'fk'>('all');
+  const [propFilter, setPropFilter] = useState('all');
+  const [tableFilter, setTableFilter] = useState('');
+  const [diffKw, setDiffKw] = useState('');
+
+  const diffOpts = useMemo(
+    () => ({
+      fullCompare, ignoreComments, ignoreDefaults, ignoreNullable, ignoreIntegerWidth,
+      // 金蝶 WebAPI 是元数据：不返回索引/外键，也不含系统字段（如 FMasterId）
+      skipRelations: baseline?.kind === 'webapi',
+      metadataBaseline: baseline?.kind === 'webapi',
+    }),
+    [fullCompare, ignoreComments, ignoreDefaults, ignoreNullable, ignoreIntegerWidth, baseline?.kind],
+  );
+  const itemsAll: DiffItem[] = useMemo(
+    () => (baseline ? diffDictionaries(baseline.dict, dict, diffOpts) : []),
+    [baseline, dict, diffOpts],
+  );
+  // 可选表列表（只含基线范围内出现差异的表）
+  const tableOptions = useMemo(() => [...new Set(itemsAll.map((i) => i.table))].sort(), [itemsAll]);
+  const items: DiffItem[] = useMemo(() => {
+    const kw = diffKw.trim().toLowerCase();
+    return itemsAll.filter((it) => {
+      if (kindFilter === 'dangerous') { if (!it.dangerous) return false; }
+      else if (kindFilter !== 'all' && it.kind !== kindFilter) return false;
+      if (levelFilter !== 'all' && it.level !== levelFilter) return false;
+      if (propFilter !== 'all' && !it.changes.some((c) => c.prop === propFilter)) return false;
+      if (tableFilter && it.table !== tableFilter) return false;
+      if (kw && !(it.table.toLowerCase().includes(kw) || it.object.toLowerCase().includes(kw))) return false;
+      return true;
+    });
+  }, [itemsAll, kindFilter, levelFilter, propFilter, tableFilter, diffKw]);
+  const filterActive = kindFilter !== 'all' || levelFilter !== 'all' || propFilter !== 'all' || !!tableFilter || !!diffKw.trim();
+  const resetFilters = () => { setKindFilter('all'); setLevelFilter('all'); setPropFilter('all'); setTableFilter(''); setDiffKw(''); };
+  const fixSql = useMemo(
+    () => (baseline ? generateFixSql(baseline.dict, dict, includeDangerous, diffOpts) : []),
+    [baseline, dict, includeDangerous, diffOpts],
+  );
+  // 按表分组（局部基线下通常只有几组）；上限 500 条防全量模式卡顿
+  const grouped = useMemo(() => {
+    const CAP = 500;
+    const shown = items.slice(0, CAP);
+    const m = new Map<string, DiffItem[]>();
+    for (const it of shown) {
+      const arr = m.get(it.table);
+      if (arr) arr.push(it); else m.set(it.table, [it]);
+    }
+    return { entries: [...m.entries()], shown: shown.length, total: items.length, capped: items.length > CAP };
+  }, [items]);
 
   const isDb = isDbKind(kind);
   const category: BaselineCategory = kind === 'webapi' ? 'webapi' : kind === 'json' ? 'json' : 'database';
@@ -1079,7 +1177,7 @@ export function RepairPanel({ dict, setDict, baseline, setBaseline, dbConfigs, k
       const d = await host.dbIntrospect(conn);
       if (info.password) await host.dbSavePassword({ ...conn, secretKey: undefined }, info.password);
       setJsonPicked('');
-      setBaseline({ dict: d, kind, label: `${info.host}:${info.port}/${info.database}` });
+      setBaseline({ dict: d, kind, label: `${info.host}:${info.port}/${info.database}`, conn: { ...info, password: '' } });
     } catch (e: any) { setErr(String(e?.message || e)); }
     setBusy(false);
   };
@@ -1091,7 +1189,7 @@ export function RepairPanel({ dict, setDict, baseline, setBaseline, dbConfigs, k
       if (!f) return;
       const d = parseDtcat(f.content, f.name);
       setJsonPicked(`${f.name}（${d.tables.length} 表）`);
-      setBaseline({ dict: d, kind: 'json', label: f.name });
+      setBaseline({ dict: d, kind: 'json', label: f.name, jsonPicked: `${f.name}（${d.tables.length} 表）`, jsonMode: 'file' });
     } catch (e: any) { setErr(String(e?.message || e)); }
     setBusy(false);
   };
@@ -1101,65 +1199,80 @@ export function RepairPanel({ dict, setDict, baseline, setBaseline, dbConfigs, k
     try {
       const d = parseDtcat(jsonText, '粘贴的 JSON');
       setJsonPicked(`粘贴内容（${d.tables.length} 表）`);
-      setBaseline({ dict: d, kind: 'json', label: '粘贴 JSON' });
+      setBaseline({ dict: d, kind: 'json', label: '粘贴 JSON', jsonPicked: `粘贴内容（${d.tables.length} 表）`, jsonMode: 'paste' });
     } catch (e: any) { setErr(String(e?.message || e)); }
   };
 
   return (
     <div>
       <Section title="拉取真实结构作为比对基准（现状）">
-        <div class="row" style="margin-bottom:6px;gap:10px">
-          <span class="small muted">基线来源：</span>
-          <select name="dt-baseline-cat" value={category} onInput={(e) => setCategory((e.target as HTMLSelectElement).value as BaselineCategory)}>
-            <option value="database">数据库</option>
-            <option value="webapi">金蝶 WebAPI</option>
-            <option value="json">JSON 文件</option>
-          </select>
-          {category === 'database' && (
-            <select name="dt-baseline-kind" value={dbKind} onInput={(e) => switchKind((e.target as HTMLSelectElement).value as BaselineKind)}>
-              {DB_BASELINE_KINDS.map((d) => <option value={d.id}>{d.label}</option>)}
+        {/* 选择行：基线来源 /（数据库）类型 /（有配置时）项目配置 /（多配置时）金蝶配置 */}
+        <div class="row" style="margin-bottom:10px;gap:12px">
+          <label class="row" style="gap:6px">
+            <span class="small muted">基线来源</span>
+            <select name="dt-baseline-cat" value={category} onInput={(e) => setCategory((e.target as HTMLSelectElement).value as BaselineCategory)}>
+              <option value="database">数据库</option>
+              <option value="webapi">金蝶 WebAPI</option>
+              <option value="json">JSON 文件</option>
             </select>
+          </label>
+          {category === 'database' && (
+            <label class="row" style="gap:6px">
+              <span class="small muted">类型</span>
+              <select name="dt-baseline-kind" value={dbKind} onInput={(e) => switchKind((e.target as HTMLSelectElement).value as BaselineKind)}>
+                {DB_BASELINE_KINDS.map((d) => <option value={d.id}>{d.label}</option>)}
+              </select>
+            </label>
+          )}
+          {category === 'database' && (dbConfigs || []).length > 0 && (
+            <label class="row" style="gap:6px">
+              <span class="small muted">项目配置</span>
+              <select value={info.configId || ''} onInput={(e) => { const v = (e.target as HTMLSelectElement).value; if (v) applyDbConfig(v); }}>
+                <option value="">（手动填写）</option>
+                {(dbConfigs || []).map((c) => <option value={c.id}>{c.name}（{c.host}/{c.database}）</option>)}
+              </select>
+            </label>
+          )}
+          {kind === 'webapi' && (kdConfigs || []).length > 1 && (
+            <label class="row" style="gap:6px">
+              <span class="small muted">金蝶配置</span>
+              <select value={kdConfigId} onInput={(e) => setKdConfigId((e.target as HTMLSelectElement).value)}>
+                {(kdConfigs || []).map((c) => <option value={c.id}>{c.name}</option>)}
+              </select>
+            </label>
           )}
         </div>
+
         {isDb && (
           <div>
-            {(dbConfigs || []).length > 0 && (
-              <div class="row" style="margin-bottom:6px;gap:8px">
-                <span class="small muted">项目配置预填：</span>
-                <select value={info.configId || ''} onInput={(e) => { const v = (e.target as HTMLSelectElement).value; if (v) applyDbConfig(v); }}>
-                  <option value="">（手动填写）</option>
-                  {(dbConfigs || []).map((c) => <option value={c.id}>{c.name}（{c.host}/{c.database}）</option>)}
-                </select>
-              </div>
-            )}
-            <div class="row">
-              <span class="badge info" style="align-self:center">{DB_BASELINE_KINDS.find((d) => d.id === kind)?.label}</span>
-              <input type="text" style="width:120px" placeholder="host" value={info.host} onInput={(e) => setInfo({ ...info, host: (e.target as HTMLInputElement).value })} />
-              <input type="number" style="width:60px" value={info.port} onInput={(e) => setInfo({ ...info, port: Number((e.target as HTMLInputElement).value) })} />
-              <input type="text" style="width:80px" placeholder="user" value={info.user} onInput={(e) => setInfo({ ...info, user: (e.target as HTMLInputElement).value })} />
-              <input type="password" style="width:100px" placeholder="password" value={info.password} onInput={(e) => setInfo({ ...info, password: (e.target as HTMLInputElement).value })} />
-              <input type="text" style="width:120px" placeholder="database" value={info.database} onInput={(e) => setInfo({ ...info, database: (e.target as HTMLInputElement).value })} />
+            <div class="form-grid">
+              <label class="fld"><span>主机</span>
+                <input type="text" placeholder="127.0.0.1" value={info.host} onInput={(e) => setInfo({ ...info, host: (e.target as HTMLInputElement).value })} />
+              </label>
+              <label class="fld"><span>端口</span>
+                <input type="number" value={info.port} onInput={(e) => setInfo({ ...info, port: Number((e.target as HTMLInputElement).value) })} />
+              </label>
+              <label class="fld"><span>用户名</span>
+                <input type="text" placeholder="user" value={info.user} onInput={(e) => setInfo({ ...info, user: (e.target as HTMLInputElement).value })} />
+              </label>
+              <label class="fld"><span>密码</span>
+                <input type="password" placeholder={info.configId ? '留空=用项目凭据' : 'password'} value={info.password} onInput={(e) => setInfo({ ...info, password: (e.target as HTMLInputElement).value })} />
+              </label>
+              <label class="fld"><span>库名 / 服务名</span>
+                <input type="text" placeholder="database / service name" value={info.database} onInput={(e) => setInfo({ ...info, database: (e.target as HTMLInputElement).value })} />
+              </label>
+            </div>
+            <div class="row" style="justify-content:flex-end;margin-top:10px">
               <Btn primary onClick={pullDb} disabled={busy || !info.database}>{busy ? '拉取中…' : '拉取库结构'}</Btn>
             </div>
           </div>
         )}
         {kind === 'webapi' && (
-          <div>
-            {(kdConfigs || []).length > 1 && (
-              <div class="row" style="margin-bottom:6px;gap:8px">
-                <span class="small muted">金蝶配置：</span>
-                <select value={kdConfigId} onInput={(e) => setKdConfigId((e.target as HTMLSelectElement).value)}>
-                  {(kdConfigs || []).map((c) => <option value={c.id}>{c.name}</option>)}
-                </select>
-              </div>
-            )}
-            <div class="small muted" style="margin-bottom:6px">走项目金蝶配置拉取表单元数据；appSecret / 密码留空则用项目凭据库已存值。</div>
-            <KingdeeWebApiForm projectId={projectId} configId={kdConfigId || kdConfigs?.[0]?.id} onFetched={(d, label) => { setJsonPicked(''); setBaseline({ dict: d, kind: 'webapi', label }); }} />
-          </div>
+          <KingdeeWebApiForm projectId={projectId} configId={kdConfigId || kdConfigs?.[0]?.id} onFetched={(d, label) => { setJsonPicked(''); setBaseline({ dict: d, kind: 'webapi', label, kdConfigId }); }} />
         )}
         {kind === 'json' && (
           <div>
-            <div class="row" style="margin-bottom:6px;gap:8px">
+            <div class="row" style="margin-bottom:8px;gap:8px">
               <button class={`btn${jsonMode === 'file' ? ' primary' : ''}`} onClick={() => setJsonMode('file')}>导入文件</button>
               <button class={`btn${jsonMode === 'paste' ? ' primary' : ''}`} onClick={() => setJsonMode('paste')}>粘贴 JSON</button>
             </div>
@@ -1172,7 +1285,7 @@ export function RepairPanel({ dict, setDict, baseline, setBaseline, dbConfigs, k
             {jsonMode === 'paste' && (
               <div>
                 <textarea class="mono" rows={8} style="width:100%" placeholder='粘贴 .dtcat.json 内容：{"version":1,"tables":[...]}' value={jsonText} onInput={(e) => setJsonText((e.target as HTMLTextAreaElement).value)} />
-                <div class="row" style="margin-top:6px"><Btn primary onClick={parseJsonText} disabled={!jsonText.trim()}>解析为基线</Btn></div>
+                <div class="row" style="justify-content:flex-end;margin-top:8px"><Btn primary onClick={parseJsonText} disabled={!jsonText.trim()}>解析为基线</Btn></div>
               </div>
             )}
           </div>
@@ -1182,39 +1295,93 @@ export function RepairPanel({ dict, setDict, baseline, setBaseline, dbConfigs, k
 
       {baseline && (
         <div>
-          <div class="row" style="margin-bottom:8px">
-            <span class="badge info">差异 {items.length}</span>
-            <span class="badge err">危险 {items.filter((i) => i.dangerous).length}</span>
-            <label class="small"><input type="checkbox" checked={includeDangerous} onInput={(e) => setIncludeDangerous((e.target as HTMLInputElement).checked)} /> 包含危险操作（DROP）</label>
-            <span class="muted small">期望 = 当前字典（{dict.tables.length} 表），基线 = [{BASELINE_KINDS.find((k) => k.id === baseline!.kind)?.label}] {baseline.label}（{baseline.dict.tables.length} 表）</span>
+          <div class="row" style="margin-bottom:6px;flex-wrap:wrap;gap:12px">
+            <span class="badge info">差异 {items.length}{items.length !== itemsAll.length ? ` / ${itemsAll.length}` : ''}</span>
+            <span class="badge err">危险 {itemsAll.filter((i) => i.dangerous).length}</span>
+            <label class="small" title="只比对基线报文里返回的表；字典其余表不参与"><input type="checkbox" checked={fullCompare} onInput={(e) => setFullCompare((e.target as HTMLInputElement).checked)} /> 全量比对（含字典额外表）</label>
+            <label class="small"><input type="checkbox" checked={ignoreComments} onInput={(e) => setIgnoreComments((e.target as HTMLInputElement).checked)} /> 忽略注释差异</label>
+            <label class="small"><input type="checkbox" checked={ignoreDefaults} onInput={(e) => setIgnoreDefaults((e.target as HTMLInputElement).checked)} /> 忽略默认值差异</label>
+            <label class="small"><input type="checkbox" checked={ignoreNullable} onInput={(e) => setIgnoreNullable((e.target as HTMLInputElement).checked)} /> 忽略可空差异</label>
+            <label class="small" title="金蝶元数据常用 bigint，PDM 常写 int；勾选后 int/bigint/smallint 视为同一类型"><input type="checkbox" checked={ignoreIntegerWidth} onInput={(e) => setIgnoreIntegerWidth((e.target as HTMLInputElement).checked)} /> 忽略整型宽度</label>
+            <label class="small"><input type="checkbox" checked={includeDangerous} onInput={(e) => setIncludeDangerous((e.target as HTMLInputElement).checked)} /> 含危险操作（DROP）</label>
+          </div>
+          <div class="small muted" style="margin-bottom:8px">
+            比对范围：基线 [{BASELINE_KINDS.find((k) => k.id === baseline!.kind)?.label}] {baseline.label}（{baseline.dict.tables.length} 表） ↔ 字典（{dict.tables.length} 表）
+            · {fullCompare ? '全量比对' : '仅基线返回的表（字典其余表不参与）'}
+            · 基线=现状，字典=期望；字典独有=现状缺、基线独有=字典未收录（默认不 DROP）
+            · 类型按统一类型族比较（int/bigint、varchar/char、datetime/datetime2 等），不再按字符串直比
+            {baseline.kind === 'webapi' && ' · 元数据只校验表单字段，字典多出的系统字段不反向报缺'}
+          </div>
+          <div class="row" style="margin-bottom:6px;gap:6px;flex-wrap:wrap">
+            {([['all', '全部'], ['modified', '变更'], ['removed', '基线独有'], ['added', '字典独有'], ['dangerous', '危险']] as const).map(([k, label]) => (
+              <button class={`btn${kindFilter === k ? ' primary' : ''}`} onClick={() => setKindFilter(k)}>{label}</button>
+            ))}
+            <span class="grow" />
+            <span class="small muted">筛选 {items.length} / {itemsAll.length}</span>
+            {filterActive && <Btn onClick={resetFilters}>重置</Btn>}
+          </div>
+          <div class="row" style="margin-bottom:8px;gap:8px;flex-wrap:wrap">
+            <label class="row" style="gap:4px"><span class="small muted">级别</span>
+              <select value={levelFilter} onInput={(e) => setLevelFilter((e.target as HTMLSelectElement).value as 'all' | 'table' | 'column' | 'index' | 'fk')}>
+                <option value="all">全部</option>
+                <option value="table">表</option>
+                <option value="column">字段</option>
+                <option value="index">索引</option>
+                <option value="fk">外键</option>
+              </select>
+            </label>
+            <label class="row" style="gap:4px"><span class="small muted">变更项</span>
+              <select value={propFilter} onInput={(e) => setPropFilter((e.target as HTMLSelectElement).value)}>
+                <option value="all">全部</option>
+                <option value="类型">类型</option>
+                <option value="可空">可空</option>
+                <option value="默认值">默认值</option>
+                <option value="注释">注释</option>
+                <option value="主键">主键</option>
+              </select>
+            </label>
+            <label class="row" style="gap:4px"><span class="small muted">表</span>
+              <select value={tableFilter} onInput={(e) => setTableFilter((e.target as HTMLSelectElement).value)}>
+                <option value="">全部</option>
+                {tableOptions.map((t) => <option value={t}>{t}</option>)}
+              </select>
+            </label>
+            <input type="text" style="width:180px" placeholder="搜索表名/字段…" value={diffKw} onInput={(e) => setDiffKw((e.target as HTMLInputElement).value)} />
+            {grouped.capped && <span class="small muted">仅显示前 {grouped.shown} 条（共 {grouped.total} 条），请用筛选/搜索</span>}
           </div>
           <div class="grid2">
             <Section title="差异明细">
-              <div style="max-height:340px;overflow:auto">
-                <table class="tbl small">
-                  <thead><tr><th>级别</th><th>表</th><th>对象</th><th>类型</th><th>明细</th></tr></thead>
-                  <tbody>
-                    {items.map((it) => (
-                      <tr>
-                        <td>{it.level}</td><td class="mono">{it.table}</td><td class="mono">{it.object}</td>
-                        <td><span class={`badge ${it.kind}`}>{it.kind}</span>{it.dangerous && ' ⚠'}</td>
-                        <td class="small">{it.changes.map((c) => `${c.prop}: ${c.from} → ${c.to}`).join('；')}</td>
-                      </tr>
-                    ))}
-                    {items.length === 0 && <tr><td colspan={5} class="muted">字典与基线完全一致 🎉</td></tr>}
-                  </tbody>
-                </table>
+              <div style="max-height:420px;overflow:auto">
+                {grouped.entries.length === 0 && <div class="muted small">无差异（或已被筛选掉）</div>}
+                {grouped.entries.map(([tbl, its]) => (
+                  <details open key={tbl} style="margin-bottom:6px">
+                    <summary class="small"><b class="mono">{tbl}</b> <span class="muted">（{its.length} 处差异）</span></summary>
+                    <table class="tbl small" style="margin-top:4px">
+                      <thead><tr><th>级别</th><th>对象</th><th>类型</th><th>明细</th></tr></thead>
+                      <tbody>
+                        {its.map((it, idx) => (
+                          <tr key={idx}>
+                            <td>{it.level}</td>
+                            <td class="mono">{it.object}</td>
+                            <td><span class={`badge ${it.kind}`} title={it.kind === 'added' ? '字典有、基线无 → 现状需要新增' : it.kind === 'removed' ? '基线有、字典未收录 → 默认不生成 DROP' : '双方都有但定义不同'}>{it.kind === 'added' ? '字典独有' : it.kind === 'removed' ? '基线独有' : '变更'}</span>{it.dangerous && ' ⚠'}</td>
+                            <td class="small">{it.changes.map((c) => `${c.prop}: ${c.from} → ${c.to}`).join('；')}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </details>
+                ))}
               </div>
               <div class="row" style="margin-top:6px">
-                <Btn onClick={() => setDict(mergeBaseIntoTarget(baseline!.dict, dict))}>以基线为准回写字典（带变更标记）</Btn>
-                <CopyBtn text={() => diffReportMarkdown(baseline!.dict, dict, items)} label="复制差异报告(MD)" />
+                <Btn onClick={() => setDict(mergeBaseIntoTarget(baseline!.dict, dict, diffOpts))}>以基线为准回写字典（带变更标记）</Btn>
+                <CopyBtn text={() => diffReportMarkdown(baseline!.dict, dict, itemsAll)} label="复制差异报告(MD)" />
               </div>
             </Section>
             <Section title={`修复 SQL（以字典为准，${fixSql.length} 条）`}>
               {baseline.kind === 'webapi' && (
                 <div class="small muted" style="margin-bottom:6px">仅参考：金蝶端没有 DDL 执行通道，以下 SQL 只用于你自己数据库的对齐，不要在金蝶上执行。</div>
               )}
-              <pre class="out" style="max-height:340px">{fixSql.join('\n') || '无需修复'}</pre>
+              <pre class="out" style="max-height:420px">{fixSql.join('\n') || '无需修复'}</pre>
               <div class="row">
                 <CopyBtn text={() => fixSql.join('\n')} label="复制 SQL" />
                 <Btn onClick={async () => {

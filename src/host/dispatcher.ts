@@ -27,6 +27,17 @@ export function initHost(ctx: vscode.ExtensionContext) {
   context = ctx;
 }
 
+/** 读文本文件：按 BOM 自动识别 UTF-16LE/BE、UTF-8 BOM（金蝶导出的数据字典 HTML 常为 UTF-16LE） */
+async function readTextSmart(p: string): Promise<string> {
+  const buf = await fs.promises.readFile(p);
+  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) return new TextDecoder('utf-16le').decode(buf.subarray(2));
+  if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff) {
+    try { return new TextDecoder('utf-16be').decode(buf.subarray(2)); } catch { /* 不支持 BE 时回退 UTF-8 */ }
+  }
+  if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) return buf.subarray(3).toString('utf8');
+  return buf.toString('utf8');
+}
+
 export async function handleHostCommand(cmd: HostCommand, payload: any, panel: vscode.WebviewPanel): Promise<unknown> {
   switch (cmd) {
     case 'getSettings': {
@@ -91,7 +102,7 @@ export async function handleHostCommand(cmd: HostCommand, payload: any, panel: v
       return {
         name: uris[0].fsPath.split('/').pop() || uris[0].fsPath,
         path: uris[0].fsPath,
-        content: await fs.promises.readFile(uris[0].fsPath, 'utf8'),
+        content: await readTextSmart(uris[0].fsPath),
       };
     }
     // ---------- 项目库（数据字典持久化） ----------
@@ -190,7 +201,8 @@ export async function handleHostCommand(cmd: HostCommand, payload: any, panel: v
         const a = projects().load(projectId);
         const b = projects().load(otherId);
         if (!a || !b) return { ok: false, error: '其中一个项目没有字典数据，无法比对' };
-        const items = diffDictionaries(a, b);
+        // 跨项目比对是两份完整字典对比，必须用全量语义（含两边额外表）
+        const items = diffDictionaries(a, b, { fullCompare: true });
         // 注意语义：diffDictionaries(当前, 对方) 里
         //   added   = 对方有、当前没有 → 仅对方项目有
         //   removed = 当前有、对方没有 → 仅当前项目有
@@ -320,7 +332,7 @@ export async function handleHostCommand(cmd: HostCommand, payload: any, panel: v
       // 仅用于重新解析用户此前主动选择过的文件；失败返回 ok:false 而非抛错
       const { path } = payload as { path: string };
       try {
-        return { ok: true, content: await fs.promises.readFile(path, 'utf8') };
+        return { ok: true, content: await readTextSmart(path) };
       } catch (e: any) {
         return { ok: false, error: String(e?.message || e) };
       }

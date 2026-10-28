@@ -1,5 +1,5 @@
 import { h } from 'preact';
-import { useState, useMemo, useEffect } from 'preact/hooks';
+import { useState, useMemo, useEffect, useRef } from 'preact/hooks';
 import { Btn, Section } from '../../components';
 import { ProjectMeta, ProjectConfig } from '../../../core/messaging';
 import { host } from '../../bridge';
@@ -9,7 +9,7 @@ import { tablesMatching } from '../../../dictionary/search-index';
 import { MergeConflict } from '../../../dictionary/merge';
 
 const KIND_LABEL: Record<SourceKind, string> = {
-  pdm: 'PDM', ddl: 'DDL', md: 'Markdown', excel: 'Excel', db: '数据库', kingdee: '金蝶', dtcat: '字典文件',
+  pdm: 'PDM', ddl: 'DDL', md: 'Markdown', excel: 'Excel', db: '数据库', kingdee: '金蝶', 'kingdee-html': '金蝶HTML', dtcat: '字典文件',
 };
 
 export function sourceKindLabel(k: SourceKind): string {
@@ -179,7 +179,8 @@ export function KingdeeWebApiForm(p: { projectId?: string | null; configId?: str
       if (!r.ok) { setMsg(`✗ ${r.error}`); return; }
       const d = parseKingdeeMetadata(r.text || '', '金蝶 ' + ids.join(','));
       if (!d.tables.length) {
-        setMsg(`已取到报文但未能识别结构：${d.importErrors[0]?.message || '未识别到表单/字段'}，可在「扩展字段」页签粘贴报文手动解析。`);
+        const preview = String(r.text || '').replace(/\s+/g, ' ').slice(0, 500);
+        setMsg(`已取到报文但未能识别结构：${d.importErrors[0]?.message || '未识别到表单/字段'}。原始返回（前 500 字）：${preview}`);
         return;
       }
       p.onFetched(d, `金蝶 ${ids.join(',')}`, r.text || '');
@@ -191,10 +192,18 @@ export function KingdeeWebApiForm(p: { projectId?: string | null; configId?: str
 
   return (
     <div>
-      <div class="toolbar" style="flex-wrap:wrap; gap:8px">
-        <input type="text" placeholder="表单标识，逗号分隔，如 BD_MATERIAL,BD_CUSTOMER" style="flex:1 1 260px" value={formIds} onInput={(e) => setFormIds((e.target as HTMLInputElement).value)} />
-        <input type="password" placeholder="appSecret" style="width:150px" value={secret} onInput={(e) => setSecret((e.target as HTMLInputElement).value)} />
-        <input type="password" placeholder="登录密码" style="width:150px" value={pwd} onInput={(e) => setPwd((e.target as HTMLInputElement).value)} />
+      <div class="form-grid">
+        <label class="fld" style="grid-column:1 / -1"><span>表单标识（逗号分隔）</span>
+          <input type="text" placeholder="表单标识，逗号分隔，如 BD_MATERIAL,BD_CUSTOMER" value={formIds} onInput={(e) => setFormIds((e.target as HTMLInputElement).value)} />
+        </label>
+        <label class="fld"><span>appSecret</span>
+          <input type="password" placeholder="appSecret（留空用已存）" value={secret} onInput={(e) => setSecret((e.target as HTMLInputElement).value)} />
+        </label>
+        <label class="fld"><span>登录密码</span>
+          <input type="password" placeholder="登录密码（留空用已存）" value={pwd} onInput={(e) => setPwd((e.target as HTMLInputElement).value)} />
+        </label>
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:10px">
         <Btn primary onClick={doFetch} disabled={busy}>{busy ? '拉取中…' : '拉取元数据'}</Btn>
       </div>
       {msg && <div class="small" style="margin-top:6px">{msg}</div>}
@@ -222,6 +231,7 @@ export function KingdeePanel(p: { projectId?: string | null; configs?: import('.
         <div class="small muted" style="margin-bottom:6px">
           把表单元数据（XML/JSON）或 WebAPI 返回的报文直接粘进来即可，不需要网络与账号。
           官方报文语义：Key=字段名、Name=中文标题、MustInput=1 → 必填、IsViewVisible=false → 界面已隐藏。
+          多语言字段（FName/FDescription 等）会按金蝶物理结构自动归入 {'<表>_L'} 表。
         </div>
         <textarea
           class="mono"
@@ -236,6 +246,7 @@ export function KingdeePanel(p: { projectId?: string | null; configs?: import('.
       <Section title="金蝶云星空 · 方式二：WebAPI 直连">
         <div class="small muted" style="margin-bottom:6px">
           接口地址、账套、应用 Id 在「连接配置」页签配置（可配多条）；appSecret 与密码只存 VS Code 凭据库，不进项目文件。
+          多语言字段（含自定义多语言字段）会自动拆到 {'<表>_L'}，并补齐 FLOCALEID，与真实库结构一致。
         </div>
         {(p.configs || []).length > 1 && (
           <div class="row" style="margin-bottom:6px;gap:8px">
@@ -584,6 +595,7 @@ export function ProjectConfigPanel(p: {
 const ROW_H = 24; // 行高固定，才能用 scrollTop 直接算可视区间
 
 export type TableFilter = 'all' | 'noComment' | 'noPk' | 'changed' | `kind:${string}`;
+export type TableSort = 'name' | 'table' | 'columns';
 
 export function filterLabel(f: TableFilter, sources: any[]): string {
   if (f === 'all') return '全部表';
@@ -619,15 +631,27 @@ export function TableList(p: {
   sources?: any[];
   selected?: string;
   onSelect: (name: string) => void;
+  /** 输入框即时值（受控），每次都立即回显，避免防抖期间被旧值覆盖 */
   keyword: string;
+  /** 防抖后的搜索值：真正参与过滤；缺省用 keyword */
+  activeKeyword?: string;
   onKeyword: (v: string) => void;
   maxHits?: number;
 }) {
   const [filter, setFilter] = useState<TableFilter>('all');
+  const [sortBy, setSortBy] = useState<TableSort>('name');
   const [scrollTop, setScrollTop] = useState(0);
   const [viewH, setViewH] = useState(600);
+  const listRef = useRef<HTMLDivElement | null>(null);
   const sources = p.sources || [];
-  const kw = (p.keyword || '').trim().toLowerCase();
+  const kw = (p.activeKeyword ?? p.keyword ?? '').trim().toLowerCase();
+
+  // 中文名按拼音排序（numeric 让 F2 排在 F10 前）；切筛选/排序/关键字时回到顶部
+  const collator = useMemo(() => new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' }), []);
+  useEffect(() => {
+    setScrollTop(0);
+    if (listRef.current) listRef.current.scrollTop = 0;
+  }, [filter, sortBy, kw]);
 
   // 关键字优先：命中列的表排在前面，仍然是"表"级别的结果（不展开字段）
   const tableByName = useMemo(() => {
@@ -646,8 +670,26 @@ export function TableList(p: {
     [kw, hitNames, tableByName, p.tables, filter],
   );
 
-  const capped = useMemo(() => (kw ? list.slice(0, p.maxHits ?? 200) : list), [kw, list, p.maxHits]);
-  const total = kw ? list.length : capped.length;
+  // 默认按名称（中文名，缺中文名时用表名）排序；也可切表名 / 字段数
+  const sorted = useMemo(() => {
+    const labelOf = (t: any) => String(t.code || t.comment || '').trim();
+    const arr = [...list];
+    arr.sort((a, b) => {
+      if (sortBy === 'columns') {
+        return (b.columns?.length || 0) - (a.columns?.length || 0) || collator.compare(String(a.name || ''), String(b.name || ''));
+      }
+      if (sortBy === 'table') return collator.compare(String(a.name || ''), String(b.name || ''));
+      // 有中文名的排前面，组内按拼音；无中文名的按表名排在后面
+      const la = labelOf(a);
+      const lb = labelOf(b);
+      if (!la !== !lb) return la ? -1 : 1;
+      return collator.compare(la || String(a.name || ''), lb || String(b.name || '')) || collator.compare(String(a.name || ''), String(b.name || ''));
+    });
+    return arr;
+  }, [list, sortBy, collator]);
+
+  const capped = useMemo(() => (kw ? sorted.slice(0, p.maxHits ?? 200) : sorted), [kw, sorted, p.maxHits]);
+  const total = kw ? sorted.length : capped.length;
 
   const start = Math.max(0, Math.floor(scrollTop / ROW_H) - 4);
   const end = Math.min(capped.length, Math.ceil((scrollTop + viewH) / ROW_H) + 4);
@@ -667,19 +709,25 @@ export function TableList(p: {
           onInput={(e: any) => p.onKeyword(e.target.value)}
         />
       </div>
-      <div class="row" style="margin-bottom:6px; flex:none">
-        <select value={filter} disabled={!!kw} onInput={(e: any) => setFilter(e.target.value as TableFilter)} title="按条件筛选表（有搜索关键字时以搜索结果为准）">
+      <div class="row" style="margin-bottom:6px; flex:none; gap:6px">
+        <select value={filter} disabled={!!kw} style="flex:1; min-width:0" onInput={(e: any) => setFilter(e.target.value as TableFilter)} title="按条件筛选表（有搜索关键字时以搜索结果为准）">
           <option value="all">全部表</option>
           <option value="noComment">缺中文注释</option>
           <option value="noPk">缺主键</option>
           <option value="changed">有变更标记</option>
           {kinds.map((k) => <option value={`kind:${k}`}>{filterLabel(`kind:${k}` as TableFilter, sources)}</option>)}
         </select>
-        <span class="small muted" style="margin-left:6px">{total} 张</span>
+        <select value={sortBy} style="flex:none" onInput={(e: any) => setSortBy(e.target.value as TableSort)} title="列表排序">
+          <option value="name">按名称</option>
+          <option value="table">按表名</option>
+          <option value="columns">按字段数</option>
+        </select>
+        <span class="small muted" style="flex:none">{total} 张</span>
       </div>
 
       <div
         class="vlist"
+        ref={listRef}
         onScroll={(e: any) => { setScrollTop(e.currentTarget.scrollTop); setViewH(e.currentTarget.clientHeight || viewH); }}
       >
         {capped.length === 0 && <div class="small muted" style="padding:8px">没有匹配的表</div>}
@@ -700,8 +748,8 @@ export function TableList(p: {
         </div>
       </div>
 
-      {kw && list.length > capped.length && (
-        <div class="small muted" style="padding:4px 2px; flex:none">命中 {list.length} 张，仅列出前 {capped.length} 张，请用更精确的关键字</div>
+      {kw && sorted.length > capped.length && (
+        <div class="small muted" style="padding:4px 2px; flex:none">命中 {sorted.length} 张，仅列出前 {capped.length} 张，请用更精确的关键字</div>
       )}
     </div>
   );

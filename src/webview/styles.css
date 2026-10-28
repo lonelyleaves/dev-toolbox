@@ -20,13 +20,16 @@ body {
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb {
-  background: var(--vscode-scrollbarSlider-background, rgba(128, 128, 128, 0.35));
+  /* 加深：不依赖 VS Code 默认半透明值（部分主题仅 0.35，几乎看不见） */
+  background: rgba(140, 140, 140, 0.55);
   border-radius: 5px;
   border: 2px solid transparent;
   background-clip: padding-box;
+  min-height: 28px;
 }
-::-webkit-scrollbar-thumb:hover { background: var(--vscode-scrollbarSlider-hoverBackground, rgba(128, 128, 128, 0.55)); background-clip: padding-box; }
-::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb:hover { background: rgba(180, 180, 180, 0.85); background-clip: padding-box; }
+::-webkit-scrollbar-thumb:active { background: rgba(200, 200, 200, 0.95); background-clip: padding-box; }
+::-webkit-scrollbar-track { background: rgba(128, 128, 128, 0.08); }
 
 .app { display: flex; height: 100%; overflow: hidden; }
 
@@ -326,6 +329,11 @@ code { background: var(--vscode-textCodeBlock-background); border-radius: 4px; p
 .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--gap); }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .col { display: flex; flex-direction: column; gap: 6px; }
+/* 标签在上的响应式表单网格：窄面板自动减少列数 */
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px 14px; }
+.form-grid .fld { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.form-grid .fld > span { font-size: 11px; opacity: .75; }
+.form-grid .fld > input, .form-grid .fld > select { width: 100%; box-sizing: border-box; }
 .grow { flex: 1; min-width: 0; }
 .muted { opacity: 0.65; }
 .small { font-size: 11px; }
@@ -559,14 +567,20 @@ ul.plain li:last-child { border-bottom: none; }
   flex-wrap: nowrap;
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: thin;
+  /* 不要设置 scrollbar-width/scrollbar-color：Chromium 121+ 会因此忽略 ::-webkit-scrollbar 自定义样式 */
   margin-bottom: 0;
+  padding-bottom: 2px;
 }
-.dc-tabs::-webkit-scrollbar { height: 6px; }
+.dc-tabs::-webkit-scrollbar { height: 10px; }
 .dc-tabs::-webkit-scrollbar-thumb {
-  background: var(--vscode-scrollbarSlider-background);
-  border-radius: 3px;
+  background: rgba(150, 150, 150, 0.75);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  min-width: 40px;
 }
+.dc-tabs::-webkit-scrollbar-thumb:hover { background: rgba(200, 200, 200, 0.95); background-clip: padding-box; }
+.dc-tabs::-webkit-scrollbar-track { background: rgba(128, 128, 128, 0.12); border-radius: 5px; }
 .dc-tabs > .btn { flex: none; }
 
 /* 窄面板：左右留白收窄，给按钮和页签更多空间 */

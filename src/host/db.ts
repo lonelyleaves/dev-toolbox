@@ -253,19 +253,17 @@ async function introspectMssql(info: DbConnInfo, password: string): Promise<Dict
             WHEN t.name IN ('decimal','numeric') THEN '(' + CAST(c.precision AS varchar) + ',' + CAST(c.scale AS varchar) + ')'
             ELSE '' END ty,
           CASE WHEN c.is_nullable = 1 THEN 'YES' ELSE 'NO' END nu,
-          CASE WHEN kc.column_id IS NOT NULL THEN 'PRI' ELSE '' END k,
+          CASE WHEN EXISTS (
+            SELECT 1 FROM sys.index_columns ic2
+            JOIN sys.indexes i2 ON i2.object_id = ic2.object_id AND i2.index_id = ic2.index_id AND i2.is_primary_key = 1
+            WHERE ic2.object_id = c.object_id AND ic2.column_id = c.column_id
+          ) THEN 'PRI' ELSE '' END k,
           CAST(d.definition AS varchar) d,
           c.is_identity idn,
           CAST(ep.value AS NVARCHAR(1000)) cmt
         FROM sys.columns c
         JOIN sys.types t ON t.user_type_id = c.user_type_id
         LEFT JOIN sys.default_constraints d ON d.object_id = c.default_object_id
-        LEFT JOIN sys.index_columns ic ON ic.object_id = c.object_id AND ic.column_id = c.column_id
-          AND ic.index_id = (SELECT index_id FROM sys.indexes WHERE object_id = c.object_id AND is_primary_key = 1)
-        LEFT JOIN sys.indexes pk ON pk.object_id = ic.object_id AND pk.index_id = ic.index_id AND pk.is_primary_key = 1
-        LEFT JOIN (SELECT ic2.object_id, ic2.column_id, MIN(ic2.column_id) column_id FROM sys.index_columns ic2
-          JOIN sys.indexes i2 ON i2.object_id = ic2.object_id AND i2.index_id = ic2.index_id AND i2.is_primary_key = 1
-          GROUP BY ic2.object_id, ic2.column_id) kc ON kc.object_id = c.object_id AND kc.column_id = c.column_id
         LEFT JOIN sys.extended_properties ep ON ep.major_id = c.object_id AND ep.minor_id = c.column_id AND ep.name = 'MS_Description'
         WHERE c.object_id = OBJECT_ID(@tn)
         ORDER BY c.column_id`)).recordset;
