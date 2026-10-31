@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { detectTimestamp, formatMillis, relativeTime, parseDateInTz, batchConvert, nowByUnit } from '../src/logic/timestamp';
 import { analyzeCron, buildCron, CRON_TEMPLATES } from '../src/logic/cronx';
-import { tokenizeShell, parseCurl, generateCode } from '../src/logic/curlx';
+import { tokenizeShell, parseCurl, generateCode, redactCurlCommand } from '../src/logic/curlx';
 import { parseInserts, generateUpdates, toCsv, splitToSingleRowInserts } from '../src/logic/sqlrestore';
 import { repairJson, parseJsonLoose, generateTypes, jsonPath, toYaml, csvToJson, toCsv as jsonToCsv } from '../src/logic/jsonx';
 import { runRegex, explainRegex } from '../src/logic/regexx';
@@ -87,6 +87,15 @@ describe('curl', () => {
     expect(p.headers['Content-Type']).toBe('application/json');
     expect(p.headers['Accept']).toBe('application/json');
     expect(p.body).toBe('{"name":"test"}');
+  });
+
+  it('历史/持久化前脱敏 Authorization / Cookie / -u / URL 密码', () => {
+    const s = redactCurlCommand('curl -H "Authorization: Bearer abc123" -H "Cookie: sid=secret" -u user:pass https://u:p@x.com');
+    expect(s).not.toContain('abc123');
+    expect(s).not.toContain('sid=secret');
+    expect(s).not.toContain('user:pass');
+    expect(s).not.toContain('u:p@');
+    expect(s).toContain('***');
   });
   it('代码生成', () => {
     const p = parseCurl('curl -X POST https://x.com -d a=1');

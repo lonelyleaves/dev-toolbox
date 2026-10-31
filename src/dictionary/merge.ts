@@ -62,6 +62,44 @@ function cloneTable(t: TableDef, origin?: Origin): TableDef {
   };
 }
 
+/** 默认值归一化：'' / "" / ((0)) / N'x' / True/1 等写法视为同一值，避免假冲突 */
+function normDefault(v?: string | null): string {
+  let s = String(v ?? '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    // 兼容未解码的 HTML 实体
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&quot;/gi, '"')
+    // 全角/弯引号统一成 ASCII 引号，避免 '' 与 ‘’ 被当成不同默认值
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+    .trim();
+  if (!s) return '';
+  for (let i = 0; i < 3; i++) {
+    const m = s.match(/^\((.*)\)$/);
+    if (!m) break;
+    s = m[1].trim();
+  }
+  // PowerDesigner 的 ~(...)~ 默认值写法
+  for (let i = 0; i < 3; i++) {
+    const m = s.match(/^~\((.*)\)~$/);
+    if (!m) break;
+    s = m[1].trim();
+  }
+  // 允许多层引号（如 '''' 表示空串）
+  for (let i = 0; i < 3; i++) {
+    if (/^n?'(.*)'$/i.test(s)) { s = s.replace(/^n?'(.*)'$/i, '$1').trim(); continue; }
+    if (/^"(.*)"$/.test(s)) { s = s.replace(/^"(.*)"$/, '$1').trim(); continue; }
+    break;
+  }
+  if (!s) return '';
+  if (/^(null|none)$/i.test(s)) return '';
+  if (/^(true|1|y|yes|是)$/i.test(s)) return '1';
+  if (/^(false|0|n|no|否)$/i.test(s)) return '0';
+  if (/^-?\d+(?:\.0+)?$/.test(s)) return String(Number(s));
+  if (/^(getdate|getutcdate|sysdatetime|sysutcdatetime|newid|current_timestamp)\(\)$/i.test(s)) return s.toLowerCase();
+  return s;
+}
+
 function pushConflict(
   out: MergeConflict[],
   table: string,
@@ -152,7 +190,7 @@ export function mergeDictionaries(
       if (ic.pk && !tc.pk) {
         pushConflict(conflicts, target.name, tc.name, 'pk', String(!!tc.pk), String(!!ic.pk), source.name, tc.origin?.sourceId);
       }
-      if (ic.defaultValue && tc.defaultValue && ic.defaultValue !== tc.defaultValue) {
+      if (ic.defaultValue && tc.defaultValue && normDefault(ic.defaultValue) !== normDefault(tc.defaultValue)) {
         pushConflict(conflicts, target.name, tc.name, 'default', tc.defaultValue, ic.defaultValue, source.name, tc.origin?.sourceId);
       }
     }
@@ -192,15 +230,34 @@ export function applyResolutions(
   resolutions: Record<string, 'base' | 'incoming'>,
 ): DictionaryModel {
   const tables = dict.tables.map((t) => cloneTable(t));
+  // 5000+ 冲突时逐条 find 是 O(n²)，先建表/字段索引
+  const tableMap = new Map<string, TableDef>();
+  for (const t of tables) {
+    const k = normalizeName(t.name);
+    if (!tableMap.has(k)) tableMap.set(k, t);
+  }
+  const colMaps = new Map<TableDef, Map<string, ColumnDef>>();
+  const colsOf = (t: TableDef) => {
+    let m = colMaps.get(t);
+    if (!m) {
+      m = new Map<string, ColumnDef>();
+      for (const c of t.columns) {
+        const k = normalizeName(c.name);
+        if (!m.has(k)) m.set(k, c);
+      }
+      colMaps.set(t, m);
+    }
+    return m;
+  };
   for (const c of conflicts) {
     if (resolutions[c.id] !== 'incoming') continue;
-    const t = tables.find((x) => normalizeName(x.name) === normalizeName(c.table));
+    const t = tableMap.get(normalizeName(c.table));
     if (!t) continue;
     if (!c.column) {
       if (c.field === 'tableComment') t.comment = c.incomingValue ?? t.comment;
       continue;
     }
-    const col = t.columns.find((x) => normalizeName(x.name) === normalizeName(c.column!));
+    const col = colsOf(t).get(normalizeName(c.column));
     if (!col) continue;
     if (c.field === 'comment') col.comment = c.incomingValue ?? col.comment;
     else if (c.field === 'type') col.type = String(c.incomingValue ?? col.type);
@@ -243,6 +300,39 @@ export function removeSource(dict: DictionaryModel, sourceId: string): { dict: D
     removedTables,
     removedColumns,
   };
+}
+
+/**
+ * 把一个或多个来源顺序合并进已有 base（多选 PDM 等批量导入场景）。
+ * 冲突 id 按 table|column|field 去重，同一个字段被多个文件定义时以后到的文件为准。
+ * 注意：如果后一个文件的值与 base 相同（不产生冲突），前一个文件的冲突仍会保留；
+ * 这种“后一个文件又改回原值”的边界情况不做自动清除，交由用户在冲突面板确认。
+ */
+export function mergeBatchIntoBase(
+  base: DictionaryModel,
+  parsed: { source: DictSource; dict: DictionaryModel }[],
+  opts: MergeOptions = {},
+): MergeResult {
+  let dict = base;
+  const allConflicts: MergeConflict[] = [];
+  const stats: MergeStats = { tablesAdded: 0, columnsAdded: 0, tablesMatched: 0, conflicts: 0 };
+  for (const p of parsed) {
+    const r = mergeDictionaries(dict, p.dict, p.source, opts);
+    dict = r.dict;
+    allConflicts.push(...r.conflicts);
+    stats.tablesAdded += r.stats.tablesAdded;
+    stats.columnsAdded += r.stats.columnsAdded;
+    stats.tablesMatched += r.stats.tablesMatched;
+  }
+  // 同一个 table|column|field 只保留最后一次冲突（后到文件的新值优先展示）
+  const byId = new Map<string, MergeConflict>();
+  for (const c of allConflicts) {
+    byId.delete(c.id);
+    byId.set(c.id, c);
+  }
+  const conflicts = [...byId.values()];
+  stats.conflicts = conflicts.length;
+  return { dict, conflicts, stats };
 }
 
 /** 按优先级顺序合并多个来源（数字小的先合并，先到先得） */

@@ -8,6 +8,16 @@ let workerInstance: Worker | null = null;
 let requestId = 0;
 const pending = new Map<number, { resolve: (r: WorkerResponse) => void; timer: ReturnType<typeof setTimeout> }>();
 
+function failAll(error: string) {
+  for (const [id, p] of pending) {
+    clearTimeout(p.timer);
+    p.resolve({ id, ok: false, error, elapsedMs: 0 });
+  }
+  pending.clear();
+  workerInstance?.terminate();
+  workerInstance = null;
+}
+
 function getWorker(): Worker | null {
   if (typeof Worker === 'undefined') return null;
   if (workerInstance) return workerInstance;
@@ -23,6 +33,8 @@ function getWorker(): Worker | null {
         p.resolve(e.data);
       }
     };
+    workerInstance.onerror = (e) => { failAll(e.message || 'Worker 运行失败'); };
+    workerInstance.onmessageerror = () => { failAll('Worker 消息反序列化失败'); };
     return workerInstance;
   } catch {
     return null;

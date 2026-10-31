@@ -3,8 +3,9 @@
  * UI 冒烟测试：在 jsdom 里真实渲染 Preact 组件，验证只有"点开面板用一下"才会暴露的问题。
  * 宿主 API 用 acquireVsCodeApi 桩替代（postMessage 不回包，host 调用自然超时但不影响渲染断言）。
  */
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { h, render } from 'preact';
+import { useState } from 'preact/hooks';
 import { act } from 'preact/test-utils';
 
 beforeAll(() => {
@@ -30,6 +31,31 @@ async function mount(node: any) {
 }
 
 const prefill = (toolId: string, text: string) => ({ toolId, text, ts: Date.now() } as any);
+
+describe('usePersistentState 卸载保存', () => {
+  it('切换页签/卸载时 flush 最后输入，不等 400ms 防抖', async () => {
+    const { host } = await import('../src/webview/bridge');
+    vi.spyOn(host, 'readState').mockResolvedValue(undefined as any);
+    const persist = vi.spyOn(host, 'persistState').mockResolvedValue(true as any);
+    const { usePersistentState } = await import('../src/webview/components');
+    const Host = () => {
+      const [v, setV] = usePersistentState('unload-test', 'init');
+      return h('input', { value: v, onInput: (e: any) => setV(e.target.value) });
+    };
+    const { container, unmount } = await mount(h(Host, {}));
+    const input = container.querySelector('input') as HTMLInputElement;
+    await act(async () => {
+      input.value = 'last';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await flush();
+    persist.mockClear();
+
+    await unmount();
+    expect(persist).toHaveBeenCalledWith('state:unload-test', 'last');
+    vi.restoreAllMocks();
+  });
+});
 
 describe('prefill 生效（含二次送入回归）', () => {
   it('EncodePage：首次渲染即带上送入内容', async () => {
@@ -134,6 +160,29 @@ describe('数据字典：项目栏 / 冲突面板 / 来源面板 冒烟', () => 
     await unmount();
   });
 
+  it('ProjectBar 清空/删除改用页面内确认弹窗（Webview 不支持原生 confirm）', async () => {
+    const { ProjectBar } = await import('../src/webview/pages/dictionary/panels');
+    const projects = [{ id: 'p1', name: '制造库', createdAt: '', updatedAt: '', sourceCount: 2, tableCount: 1006 }];
+    let cleared = 0;
+    let deleted = 0;
+    const { container, unmount } = await mount(h(ProjectBar, {
+      projects, currentId: 'p1', onSwitch: () => {}, onCreate: () => {}, onRename: () => {},
+      onClear: () => { cleared++; }, onDelete: () => { deleted++; }, onExport: () => {}, onImport: () => {}, onConfig: () => {},
+    }));
+
+    const btn = (label: string) => [...container.querySelectorAll('button')].find((b) => b.textContent === label) as HTMLButtonElement;
+    await act(async () => { btn('清空').dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    await flush();
+    expect(container.textContent).toContain('请确认');
+    expect(cleared).toBe(0);
+
+    await act(async () => { btn('确定').dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    await flush();
+    expect(cleared).toBe(1);
+    expect(deleted).toBe(0);
+    await unmount();
+  });
+
   it('MergePanel 展示冲突并提供批量按钮', async () => {
     const { MergePanel } = await import('../src/webview/pages/dictionary/panels');
     const conflicts = [{
@@ -146,6 +195,9 @@ describe('数据字典：项目栏 / 冲突面板 / 来源面板 冒烟', () => 
     }));
     expect(container.textContent).toContain('主键');
     expect(container.textContent).toContain('内码');
+    const wrap = container.querySelector('.merge-table-wrap');
+    expect(wrap).toBeTruthy();
+    expect(wrap!.querySelectorAll('tbody tr').length).toBe(1);
     const btns = [...container.querySelectorAll('button')].map((b) => b.textContent);
     expect(btns.some((t) => t?.includes('全部保留原值'))).toBe(true);
     expect(btns.some((t) => t?.includes('全部采用新值'))).toBe(true);
@@ -318,6 +370,31 @@ describe('表列表：虚拟滚动与筛选', () => {
     const text = container.textContent || '';
     expect(text).toContain('T_TAB_2');    // 列表按防抖后的值过滤
     expect(text).not.toContain('T_TAB_1');
+    await unmount();
+  });
+
+  it('聚焦左栏后 ↑/↓ 切换数据表', async () => {
+    const { TableList } = await import('../src/webview/pages/dictionary/panels');
+    const tables = [
+      { name: 'T_A', columns: [], indexes: [], foreignKeys: [] },
+      { name: 'T_B', columns: [], indexes: [], foreignKeys: [] },
+    ];
+    const Host = () => {
+      const [sel, setSel] = useState('T_A');
+      return h(TableList, { tables, sources: [], selected: sel, onSelect: setSel, keyword: '', onKeyword: () => {} } as any);
+    };
+    const { container, unmount } = await mount(h(Host, {}));
+    const list = container.querySelector('.vlist') as HTMLElement;
+    expect(list.tabIndex).toBe(0);
+    list.focus();
+
+    await act(async () => { list.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })); });
+    await flush();
+    expect(container.querySelector('.vrow.active')?.textContent).toContain('T_B');
+
+    await act(async () => { list.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true })); });
+    await flush();
+    expect(container.querySelector('.vrow.active')?.textContent).toContain('T_A');
     await unmount();
   });
 
@@ -630,7 +707,7 @@ describe('EncodePage EAS 报文解析模式', () => {
   });
 });
 
-describe('RepairPanel 基线（数据库 4 类型 / 金蝶 WebAPI / JSON）', () => {
+describe('RepairPanel 基线（数据库 4 类型 / 金蝶 WebAPI / 金蝶云星空 / JSON）', () => {
   async function mountRepair(dbConfigs?: any, kdConfigs?: any) {
     const { RepairPanel } = await import('../src/webview/pages/DictionaryPage');
     const dict = { name: 'x', tables: [] } as any;
@@ -657,9 +734,9 @@ describe('RepairPanel 基线（数据库 4 类型 / 金蝶 WebAPI / JSON）', ()
     }
   };
 
-  it('默认 SQL Server：一级 3 类 + 二级 DB 4 项，连接行预填 1433/sa', async () => {
+  it('默认 SQL Server：一级 4 类 + 二级 DB 4 项，连接行预填 1433/sa', async () => {
     const c = await mountRepair(undefined);
-    expect(catSelect(c)!.options.length).toBe(3);
+    expect(catSelect(c)!.options.length).toBe(4);
     expect(kindSelect(c)!.options.length).toBe(4);
     const t = c.textContent || '';
     expect(t).toContain('SQL Server');
@@ -667,6 +744,7 @@ describe('RepairPanel 基线（数据库 4 类型 / 金蝶 WebAPI / JSON）', ()
     expect(t).toContain('PostgreSQL');
     expect(t).toContain('Oracle');
     expect(t).toContain('金蝶 WebAPI');
+    expect(t).toContain('金蝶云星空（表单模型）');
     expect(t).toContain('JSON 文件');
     const port = inputs(c).find((i) => i.type === 'number') as HTMLInputElement;
     expect(port.value).toBe('1433');
@@ -682,6 +760,23 @@ describe('RepairPanel 基线（数据库 4 类型 / 金蝶 WebAPI / JSON）', ()
     const labels = flds.map((f) => (f.querySelector('span')?.textContent || ''));
     expect(labels).toEqual(expect.arrayContaining(['主机', '端口', '用户名', '密码']));
     expect(labels.some((t) => t.includes('库名'))).toBe(true);
+    document.body.removeChild(c);
+  });
+
+  it('切到 金蝶云星空：可选 HTML 数据字典 / XML 元数据', async () => {
+    const c = await mountRepair(undefined);
+    await switchKind(c, '金蝶云星空');
+    const fileType = [...c.querySelectorAll('select')].find((s) => [...s.options].some((o) => o.value === 'kingdee-html')) as HTMLSelectElement | undefined;
+    expect(fileType).toBeTruthy();
+    expect([...fileType!.options].map((o) => o.textContent)).toEqual(['HTML 数据字典', 'XML 元数据']);
+    let btns = [...c.querySelectorAll('button')].map((b) => b.textContent || '');
+    expect(btns).toContain('选择 .html 数据字典');
+
+    fileType!.value = 'kingdee-xml';
+    fileType!.dispatchEvent(new Event('input', { bubbles: true }));
+    await flush();
+    btns = [...c.querySelectorAll('button')].map((b) => b.textContent || '');
+    expect(btns).toContain('选择 .xml 元数据');
     document.body.removeChild(c);
   });
 
@@ -923,6 +1018,73 @@ describe('JSON 工具箱输出行号', () => {
     const lines = (gutters[gutters.length - 1].textContent || '').trim().split('\n');
     expect(lines[0]).toBe('1');
     expect(lines.length).toBeGreaterThan(1);
+    await unmount();
+  });
+});
+
+describe('以基线回写字典', () => {
+  it('先确认再写入，写入的是基线定义而不是重新拉取', async () => {
+    const { RepairPanel } = await import('../src/webview/pages/DictionaryPage');
+    const mk = (type: string) => ({
+      version: 1, name: 'd', dialect: 'generic', importErrors: [], sources: [],
+      tables: [{ name: 'T_A', columns: [{ name: 'F1', type }], indexes: [], foreignKeys: [] }],
+    });
+    let written: any = null;
+    const { container, unmount } = await mount(h(RepairPanel, {
+      dict: mk('int') as any,
+      setDict: (d: any) => { written = d; },
+      baseline: { dict: mk('bigint') as any, kind: 'json' as const, label: 'base.json' },
+      setBaseline: () => {},
+      dbConfigs: [], kdConfigs: [], projectId: 'p1',
+    }));
+
+    const btn = [...container.querySelectorAll('button')].find((b) => b.textContent?.includes('以基线为准回写字典'));
+    expect(btn).toBeTruthy();
+    await act(async () => { btn!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    await flush();
+    expect(container.textContent).toContain('当前差异');
+    expect(written).toBe(null);
+
+    const ok = [...container.querySelectorAll('button')].find((b) => b.textContent === '确定');
+    await act(async () => { ok!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    await flush();
+    expect(written).toBeTruthy();
+    expect(written.tables[0].columns[0].type).toBe('bigint');
+    await unmount();
+  });
+});
+
+describe('数据库导入弹窗', () => {
+  it('点按钮打开弹窗；输入连接信息后自动保存配置', async () => {
+    const { DbImportForm } = await import('../src/webview/pages/DictionaryPage');
+    const saved: any[] = [];
+    const { container, unmount } = await mount(h(DbImportForm, {
+      projectId: 'p1',
+      preset: [],
+      onImported: () => {},
+      onConfigSaved: (cfg: any) => { saved.push(cfg); },
+    }));
+
+    const openBtn = [...container.querySelectorAll('button')].find((b) => b.textContent === '从数据库导入');
+    expect(openBtn).toBeTruthy();
+    await act(async () => { openBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    await flush();
+    expect(container.textContent).toContain('连接信息会在输入后自动保存');
+
+    const hostInput = [...container.querySelectorAll('input')].find((i) => i.placeholder === '127.0.0.1') as HTMLInputElement;
+    expect(hostInput).toBeTruthy();
+    await act(async () => {
+      hostInput.value = '10.0.0.9';
+      hostInput.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => { await new Promise((r) => setTimeout(r, 800)); });
+
+    expect(saved.length).toBeGreaterThan(0);
+    expect(saved[0].host).toBe('10.0.0.9');
+    expect(saved[0].name).toBe('10.0.0.9'); // 按主机自动命名
+    expect(saved[0].autoName).toBe(true);
+    expect(saved[0].id).toBeTruthy();
+    expect(container.textContent).toContain('配置已自动保存');
     await unmount();
   });
 });

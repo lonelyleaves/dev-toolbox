@@ -227,16 +227,35 @@ describe('diff 修复引擎', () => {
     expect(withDrop.some((s) => /DROP COLUMN `gone`/.test(s))).toBe(false);
     expect(generateFixSql(target, db, true).some((s) => /DROP COLUMN `gone`/.test(s))).toBe(true);
   });
+  it('默认值/标识符生成 SQL 时正确转义', () => {
+    const b = makeDict();
+    const t = makeDict();
+    t.tables[0].columns[1].defaultValue = "O'Reilly";
+    const sql = generateFixSql(b, t).join('\n');
+    expect(sql).toContain("'O''Reilly'");
+
+    const t2 = makeDict();
+    t2.tables[0].name = 't_user`x';
+    const sql2 = generateFixSql(b, t2, false, { fullCompare: true }).join('\n');
+    expect(sql2).toContain('`t_user``x`');
+  });
+
   it('以库为准回写字典带变更标记', () => {
     const db = makeDict();
     const target = makeDict();
     target.tables[0].columns[1].type = 'varchar(999)';
     db.tables[0].columns.push({ name: 'extra', type: 'int' });
+    db.tables[0].indexes.push({ name: 'ix_name', unique: true, columns: ['name'] });
+    db.tables[0].foreignKeys.push({ name: 'fk_user', columns: ['id'], refTable: 't_dept', refColumns: ['id'] });
+    target.tables[0].indexes.push({ name: 'ix_old', unique: false, columns: ['id'] });
     const merged = mergeBaseIntoTarget(db, target);
     const nameCol = merged.tables[0].columns.find((c) => c.name === 'name')!;
     expect(nameCol.type).toBe('varchar(32)');
     expect(nameCol.changeTag).toBe('modified');
     expect(merged.tables[0].columns.find((c) => c.name === 'extra')!.changeTag).toBe('added');
+    // 索引/外键也以基线为准，避免回写后差异面板仍有残留
+    expect(merged.tables[0].indexes).toEqual([{ name: 'ix_name', unique: true, columns: ['name'] }]);
+    expect(merged.tables[0].foreignKeys[0].name).toBe('fk_user');
   });
   it('SQL Server 方言修复 SQL', () => {
     const db = makeDict();

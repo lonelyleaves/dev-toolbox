@@ -34,9 +34,12 @@ export async function testConnection(info: DbConnInfo, secrets: vscode.SecretSto
     const conn = await mysql.createConnection({
       host: info.host, port: info.port, user: info.user, password, database: info.database, connectTimeout: 8000,
     });
-    const [rows]: any = await conn.query('SELECT VERSION() AS v');
-    await conn.end();
-    return rows[0]?.v ?? 'MySQL';
+    try {
+      const [rows]: any = await conn.query('SELECT VERSION() AS v');
+      return rows[0]?.v ?? 'MySQL';
+    } finally {
+      await conn.end().catch(() => undefined);
+    }
   }
   if (info.client === 'mssql') {
     const sql = await import('mssql');
@@ -44,41 +47,58 @@ export async function testConnection(info: DbConnInfo, secrets: vscode.SecretSto
       server: info.host, port: info.port, user: info.user, password, database: info.database,
       options: { encrypt: false, trustServerCertificate: true }, connectionTimeout: 8000, requestTimeout: 8000,
     });
-    const r = await pool.request().query('SELECT @@VERSION AS v');
-    await pool.close();
-    return String(r.recordset[0]?.v ?? 'SQL Server').split('\n')[0];
+    try {
+      const r = await pool.request().query('SELECT @@VERSION AS v');
+      return String(r.recordset[0]?.v ?? 'SQL Server').split('\n')[0];
+    } finally {
+      await pool.close().catch(() => undefined);
+    }
   }
   if (info.client === 'oracle') {
     const oracledb = await import('oracledb');
     const conn = await oracledb.default.getConnection({
       user: info.user, password, connectString: `${info.host}:${info.port}/${info.database}`,
     });
-    const r = await conn.execute('SELECT banner FROM v$version WHERE ROWNUM = 1');
-    await conn.close();
-    return String(r.rows[0]?.[0] ?? 'Oracle');
+    try {
+      const r = await conn.execute('SELECT banner FROM v$version WHERE ROWNUM = 1');
+      return String(r.rows[0]?.[0] ?? 'Oracle');
+    } finally {
+      await conn.close().catch(() => undefined);
+    }
   }
   const { Client } = await import('pg');
   const client = new Client({
     host: info.host, port: info.port, user: info.user, password, database: info.database, connectionTimeoutMillis: 8000,
   });
-  await client.connect();
-  const res = await client.query('SELECT version()');
-  await client.end();
-  return String(res.rows[0]?.version ?? 'PostgreSQL');
-}
-
-/** 反向导入：读取库表结构生成 DictionaryModel */
-export async function introspect(info: DbConnInfo, secrets: vscode.SecretStorage): Promise<DictionaryModel> {
-  const password = await resolvePassword({ ...info, secretKey: connKey(info) }, secrets);
-  switch (info.client) {
-    case 'mysql': return introspectMysql(info, password);
-    case 'mssql': return introspectMssql(info, password);
-    case 'oracle': return introspectOracle(info, password);
-    default: return introspectPg(info, password);
+  try {
+    await client.connect();
+    const res = await client.query('SELECT version()');
+    return String(res.rows[0]?.version ?? 'PostgreSQL');
+  } finally {
+    await client.end().catch(() => undefined);
   }
 }
 
-async function introspectMysql(info: DbConnInfo, password: string): Promise<DictionaryModel> {
+/** 反向导入：读取库表结构生成 DictionaryModel */
+export interface DbProgress {
+  phase: string;
+  current: number;
+  total: number;
+}
+export type DbProgressFn = (p: DbProgress) => void;
+
+export async function introspect(info: DbConnInfo, secrets: vscode.SecretStorage, onProgress?: DbProgressFn): Promise<DictionaryModel> {
+  const password = await resolvePassword({ ...info, secretKey: connKey(info) }, secrets);
+  onProgress?.({ phase: '连接数据库并读取结构…', current: 0, total: 0 });
+  switch (info.client) {
+    case 'mysql': return introspectMysql(info, password, onProgress);
+    case 'mssql': return introspectMssql(info, password, onProgress);
+    case 'oracle': return introspectOracle(info, password, onProgress);
+    default: return introspectPg(info, password, onProgress);
+  }
+}
+
+async function introspectMysql(info: DbConnInfo, password: string, onProgress?: DbProgressFn): Promise<DictionaryModel> {
   const mysql = await import('mysql2/promise');
   const conn = await mysql.createConnection({
     host: info.host, port: info.port, user: info.user, password, database: info.database,
@@ -142,7 +162,7 @@ async function introspectMysql(info: DbConnInfo, password: string): Promise<Dict
   }
 }
 
-async function introspectPg(info: DbConnInfo, password: string): Promise<DictionaryModel> {
+async function introspectPg(info: DbConnInfo, password: string, _onProgress?: DbProgressFn): Promise<DictionaryModel> {
   const { Client } = await import('pg');
   const client = new Client({
     host: info.host, port: info.port, user: info.user, password, database: info.database, connectionTimeoutMillis: 15000,
@@ -230,11 +250,11 @@ async function introspectPg(info: DbConnInfo, password: string): Promise<Diction
   }
 }
 
-async function introspectMssql(info: DbConnInfo, password: string): Promise<DictionaryModel> {
+async function introspectMssql(info: DbConnInfo, password: string, onProgress?: DbProgressFn): Promise<DictionaryModel> {
   const sql = await import('mssql');
   const pool = await sql.default.connect({
     server: info.host, port: info.port, user: info.user, password, database: info.database,
-    options: { encrypt: false, trustServerCertificate: true }, connectionTimeout: 15000, requestTimeout: 60000,
+    options: { encrypt: false, trustServerCertificate: true }, connectionTimeout: 15000, requestTimeout: 180000,
   });
   try {
     const dict = emptyDictionary(`${info.host}/${info.database}`, 'mssql');
@@ -243,66 +263,87 @@ async function introspectMssql(info: DbConnInfo, password: string): Promise<Dict
       FROM sys.tables t
       LEFT JOIN sys.extended_properties ep ON ep.major_id = t.object_id AND ep.minor_id = 0 AND ep.name = 'MS_Description'
       ORDER BY t.name`)).recordset;
+    const byName = new Map<string, TableDef>();
     for (const t of tables) {
       const tn = String(t.n ?? '');
       const table: TableDef = { name: tn, comment: t.c || undefined, columns: [], indexes: [], foreignKeys: [] };
-      const cols = (await pool.request().input('tn', sql.default.NVarChar(200), tn).query(`
-        SELECT c.name n,
-          t.name + CASE
-            WHEN t.name IN ('varchar','nvarchar','char','nchar','varbinary') THEN '(' + CASE WHEN c.max_length = -1 THEN 'max' ELSE CAST(CASE WHEN t.name LIKE 'n%' THEN c.max_length/2 ELSE c.max_length END AS varchar) + ')' END
-            WHEN t.name IN ('decimal','numeric') THEN '(' + CAST(c.precision AS varchar) + ',' + CAST(c.scale AS varchar) + ')'
-            ELSE '' END ty,
-          CASE WHEN c.is_nullable = 1 THEN 'YES' ELSE 'NO' END nu,
-          CASE WHEN EXISTS (
-            SELECT 1 FROM sys.index_columns ic2
-            JOIN sys.indexes i2 ON i2.object_id = ic2.object_id AND i2.index_id = ic2.index_id AND i2.is_primary_key = 1
-            WHERE ic2.object_id = c.object_id AND ic2.column_id = c.column_id
-          ) THEN 'PRI' ELSE '' END k,
-          CAST(d.definition AS varchar) d,
-          c.is_identity idn,
-          CAST(ep.value AS NVARCHAR(1000)) cmt
-        FROM sys.columns c
-        JOIN sys.types t ON t.user_type_id = c.user_type_id
-        LEFT JOIN sys.default_constraints d ON d.object_id = c.default_object_id
-        LEFT JOIN sys.extended_properties ep ON ep.major_id = c.object_id AND ep.minor_id = c.column_id AND ep.name = 'MS_Description'
-        WHERE c.object_id = OBJECT_ID(@tn)
-        ORDER BY c.column_id`)).recordset;
-      for (const c of cols) {
-        table.columns.push({
-          name: c.n, type: c.ty, nullable: c.nu === 'YES', pk: c.k === 'PRI',
-          defaultValue: c.d ? String(c.d).replace(/[()]/g, '') : undefined,
-          autoIncrement: !!c.idn, comment: c.cmt || undefined,
-        });
-      }
-      const idx = (await pool.request().input('tn', sql.default.NVarChar(200), tn).query(`
-        SELECT i.name n, CASE WHEN i.is_unique = 1 THEN 1 ELSE 0 END u,
-          STUFF((SELECT ',' + c2.name FROM sys.index_columns ic2 JOIN sys.columns c2 ON c2.object_id = ic2.object_id AND c2.column_id = ic2.column_id
-            WHERE ic2.object_id = i.object_id AND ic2.index_id = i.index_id ORDER BY ic2.key_ordinal FOR XML PATH('')), 1, 1, '') cols
-        FROM sys.indexes i
-        WHERE i.object_id = OBJECT_ID(@tn) AND i.is_primary_key = 0 AND i.name IS NOT NULL
-        ORDER BY i.name`)).recordset;
-      for (const i of idx) {
-        table.indexes.push({ name: i.n, unique: !!i.u, columns: String(i.cols).split(',') });
-      }
-      const fks = (await pool.request().input('tn', sql.default.NVarChar(200), tn).query(`
-        SELECT fk.name n, COL_NAME(fkc.parent_object_id, fkc.parent_column_id) col,
-          OBJECT_NAME(fk.referenced_object_id) rt, COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id) rc
-        FROM sys.foreign_keys fk
-        JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id
-        WHERE fk.parent_object_id = OBJECT_ID(@tn)
-        ORDER BY fk.name, fkc.constraint_column_id`)).recordset;
-      const fkMap = new Map<string, { cols: string[]; rt: string; rc: string[] }>();
-      for (const f of fks) {
-        const e: { cols: string[]; rt: string; rc: string[] } = fkMap.get(f.n) || { cols: [], rt: f.rt, rc: [] };
-        e.cols.push(f.col);
-        e.rc.push(f.rc);
-        fkMap.set(f.n, e);
-      }
-      for (const [n, e] of fkMap) {
-        table.foreignKeys.push({ name: n, columns: e.cols, refTable: e.rt, refColumns: e.rc });
-      }
       dict.tables.push(table);
+      byName.set(tn.toLowerCase(), table);
     }
+    onProgress?.({ phase: '读取表清单', current: 1, total: 4 });
+
+    // 字段：一次查全库，按表名分组（之前是每表 3 次查询，1000+ 表必然超时）
+    const cols = (await pool.request().query(`
+      SELECT tb.name tn, c.name n,
+        t.name + CASE
+          WHEN t.name IN ('varchar','nvarchar','char','nchar','varbinary') THEN '(' + CASE WHEN c.max_length = -1 THEN 'max' ELSE CAST(CASE WHEN t.name LIKE 'n%' THEN c.max_length/2 ELSE c.max_length END AS varchar) + ')' END
+          WHEN t.name IN ('decimal','numeric') THEN '(' + CAST(c.precision AS varchar) + ',' + CAST(c.scale AS varchar) + ')'
+          ELSE '' END ty,
+        CASE WHEN c.is_nullable = 1 THEN 'YES' ELSE 'NO' END nu,
+        CASE WHEN EXISTS (
+          SELECT 1 FROM sys.index_columns ic2
+          JOIN sys.indexes i2 ON i2.object_id = ic2.object_id AND i2.index_id = ic2.index_id AND i2.is_primary_key = 1
+          WHERE ic2.object_id = c.object_id AND ic2.column_id = c.column_id
+        ) THEN 'PRI' ELSE '' END k,
+        CAST(d.definition AS varchar) d,
+        c.is_identity idn,
+        CAST(ep.value AS NVARCHAR(1000)) cmt
+      FROM sys.columns c
+      JOIN sys.types t ON t.user_type_id = c.user_type_id
+      JOIN sys.tables tb ON tb.object_id = c.object_id
+      LEFT JOIN sys.default_constraints d ON d.object_id = c.default_object_id
+      LEFT JOIN sys.extended_properties ep ON ep.major_id = c.object_id AND ep.minor_id = c.column_id AND ep.name = 'MS_Description'
+      ORDER BY tb.name, c.column_id`)).recordset;
+    for (const c of cols) {
+      const table = byName.get(String(c.tn ?? '').toLowerCase());
+      if (!table) continue;
+      table.columns.push({
+        name: c.n, type: c.ty, nullable: c.nu === 'YES', pk: c.k === 'PRI',
+        defaultValue: c.d ? String(c.d).replace(/[()]/g, '') : undefined,
+        autoIncrement: !!c.idn, comment: c.cmt || undefined,
+      });
+    }
+    onProgress?.({ phase: '读取字段', current: 2, total: 4 });
+
+    // 索引：一次查全库
+    const idx = (await pool.request().query(`
+      SELECT tb.name tn, i.name n, CASE WHEN i.is_unique = 1 THEN 1 ELSE 0 END u,
+        STUFF((SELECT ',' + c2.name FROM sys.index_columns ic2 JOIN sys.columns c2 ON c2.object_id = ic2.object_id AND c2.column_id = ic2.column_id
+          WHERE ic2.object_id = i.object_id AND ic2.index_id = i.index_id ORDER BY ic2.key_ordinal FOR XML PATH('')), 1, 1, '') cols
+      FROM sys.indexes i
+      JOIN sys.tables tb ON tb.object_id = i.object_id
+      WHERE i.is_primary_key = 0 AND i.name IS NOT NULL
+      ORDER BY tb.name, i.name`)).recordset;
+    for (const i of idx) {
+      const table = byName.get(String(i.tn ?? '').toLowerCase());
+      if (!table) continue;
+      table.indexes.push({ name: i.n, unique: !!i.u, columns: String(i.cols).split(',') });
+    }
+    onProgress?.({ phase: '读取索引', current: 3, total: 4 });
+
+    // 外键：一次查全库
+    const fks = (await pool.request().query(`
+      SELECT tb.name tn, fk.name n, COL_NAME(fkc.parent_object_id, fkc.parent_column_id) col,
+        OBJECT_NAME(fk.referenced_object_id) rt, COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id) rc
+      FROM sys.foreign_keys fk
+      JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id
+      JOIN sys.tables tb ON tb.object_id = fk.parent_object_id
+      ORDER BY tb.name, fk.name, fkc.constraint_column_id`)).recordset;
+    const fkMap = new Map<string, { table: TableDef; name: string; cols: string[]; rt: string; rc: string[] }>();
+    for (const f of fks) {
+      const table = byName.get(String(f.tn ?? '').toLowerCase());
+      if (!table) continue;
+      const key = `${f.tn}|${f.n}`;
+      const e: { table: TableDef; name: string; cols: string[]; rt: string; rc: string[] } = fkMap.get(key) || { table, name: f.n, cols: [], rt: f.rt, rc: [] };
+      e.cols.push(f.col);
+      e.rc.push(f.rc);
+      fkMap.set(key, e);
+    }
+    for (const e of fkMap.values()) {
+      e.table.foreignKeys.push({ name: e.name, columns: e.cols, refTable: e.rt, refColumns: e.rc });
+    }
+    onProgress?.({ phase: '读取外键', current: 4, total: 4 });
+
     dict.meta = { source: `sqlserver://${info.host}:${info.port}/${info.database}`, importedAt: new Date().toISOString() };
     return dict;
   } finally {
@@ -310,7 +351,7 @@ async function introspectMssql(info: DbConnInfo, password: string): Promise<Dict
   }
 }
 
-async function introspectOracle(info: DbConnInfo, password: string): Promise<DictionaryModel> {
+async function introspectOracle(info: DbConnInfo, password: string, _onProgress?: DbProgressFn): Promise<DictionaryModel> {
   const oracledb = await import('oracledb');
   oracledb.default.outFormat = oracledb.default.OUT_FORMAT_OBJECT;
   const conn = await oracledb.default.getConnection({

@@ -1,4 +1,4 @@
-import { DictionaryModel, TableDef, ColumnDef, IndexDef, FkDef, findTable, findColumn, pkColumns } from './model';
+import { DictionaryModel, TableDef, ColumnDef, pkColumns } from './model';
 import { typesEquivalent } from './type-canonical';
 
 export interface DiffChange {
@@ -40,6 +40,8 @@ export interface DiffOptions {
    * 会把字典里的索引/外键全判为缺失并生成一堆 CREATE INDEX / ADD CONSTRAINT。
    */
   skipRelations?: boolean;
+  /** 只跳过外键：金蝶 HTML 数据字典有主外键表，但没有引用表信息 */
+  skipForeignKeys?: boolean;
 }
 
 /**
@@ -48,21 +50,32 @@ export interface DiffOptions {
  */
 export function diffDictionaries(base: DictionaryModel, target: DictionaryModel, opts: DiffOptions = {}): DiffItem[] {
   const items: DiffItem[] = [];
-  const baseNames = new Set(base.tables.map((t) => t.name.toLowerCase()));
+  // 大字典（3000+ 表）下不能用 Array.find 逐表查：O(n²) 会让 webview 直接卡死
+  const baseIndex = new Map<string, TableDef>();
+  for (const t of base.tables) {
+    const k = t.name.toLowerCase();
+    if (!baseIndex.has(k)) baseIndex.set(k, t);
+  }
+  const targetNames = new Set(target.tables.map((t) => t.name.toLowerCase()));
   const full = !!opts.fullCompare;
 
   for (const tt of target.tables) {
+    const bt = baseIndex.get(tt.name.toLowerCase());
     // 默认只比对基线返回的表：字典里基线之外的表不参与（不标新增）
-    if (!full && !baseNames.has(tt.name.toLowerCase())) continue;
-    const bt = findTable(base, tt.name);
+    if (!full && !bt) continue;
     if (!bt) {
       items.push({ level: 'table', table: tt.name, object: tt.name, kind: 'added', changes: [{ prop: 'table', from: '-', to: '新增' }], dangerous: false });
       continue;
     }
     // 列级
+    const baseCols = new Map<string, ColumnDef>();
+    for (const c of bt.columns) {
+      const k = c.name.toLowerCase();
+      if (!baseCols.has(k)) baseCols.set(k, c);
+    }
     const ttNames = new Set(tt.columns.map((c) => c.name.toLowerCase()));
     for (const tc of tt.columns) {
-      const bc = findColumn(bt, tc.name);
+      const bc = baseCols.get(tc.name.toLowerCase());
       if (!bc) {
         // 元数据基线不含系统字段：字典多出的列不反向报缺
         if (opts.metadataBaseline) continue;
@@ -79,25 +92,35 @@ export function diffDictionaries(base: DictionaryModel, target: DictionaryModel,
         items.push({ level: 'column', table: tt.name, object: bc.name, kind: 'removed', changes: [{ prop: 'column', from: bc.type, to: '-' }], dangerous: true });
       }
     }
-    // 索引级
-    if (!opts.skipRelations) for (const ti of tt.indexes) {
-      const bi = bt.indexes.find((i) => i.name.toLowerCase() === ti.name.toLowerCase());
-      if (!bi) {
-        items.push({ level: 'index', table: tt.name, object: ti.name, kind: 'added', changes: [{ prop: 'index', from: '-', to: ti.columns.join(',') }], dangerous: false });
-      } else if (bi.columns.join(',').toLowerCase() !== ti.columns.join(',').toLowerCase() || bi.unique !== ti.unique) {
-        items.push({ level: 'index', table: tt.name, object: ti.name, kind: 'modified', changes: [{ prop: '列', from: bi.columns.join(','), to: ti.columns.join(',') }], dangerous: false });
+    if (!opts.skipRelations) {
+      // 索引级
+      const baseIdx = new Map(bt.indexes.map((i) => [i.name.toLowerCase(), i]));
+      for (const ti of tt.indexes) {
+        const bi = baseIdx.get(ti.name.toLowerCase());
+        if (!bi) {
+          items.push({ level: 'index', table: tt.name, object: ti.name, kind: 'added', changes: [{ prop: 'index', from: '-', to: ti.columns.join(',') }], dangerous: false });
+        } else {
+          const colDiff = bi.columns.join(',').toLowerCase() !== ti.columns.join(',').toLowerCase();
+          const uniqDiff = bi.uniqueKnown !== false && ti.uniqueKnown !== false && bi.unique !== ti.unique;
+          if (colDiff || uniqDiff) {
+            const changes: DiffChange[] = [];
+            if (colDiff) changes.push({ prop: '列', from: bi.columns.join(','), to: ti.columns.join(',') });
+            if (uniqDiff) changes.push({ prop: '唯一', from: bi.unique ? '是' : '否', to: ti.unique ? '是' : '否' });
+            items.push({ level: 'index', table: tt.name, object: ti.name, kind: 'modified', changes, dangerous: false });
+          }
+        }
       }
-    }
-    // 外键级
-    if (!opts.skipRelations) for (const tf of tt.foreignKeys) {
-      const bf = bt.foreignKeys.find((f) => f.name.toLowerCase() === tf.name.toLowerCase());
-      if (!bf) {
-        items.push({ level: 'fk', table: tt.name, object: tf.name, kind: 'added', changes: [{ prop: 'fk', from: '-', to: `${tf.columns.join(',')} → ${tf.refTable}(${tf.refColumns.join(',')})` }], dangerous: false });
+      // 外键级
+      const baseFks = new Map(bt.foreignKeys.map((f) => [f.name.toLowerCase(), f]));
+      if (!opts.skipForeignKeys) for (const tf of tt.foreignKeys) {
+        if (!baseFks.has(tf.name.toLowerCase())) {
+          items.push({ level: 'fk', table: tt.name, object: tf.name, kind: 'added', changes: [{ prop: 'fk', from: '-', to: `${tf.columns.join(',')} → ${tf.refTable}(${tf.refColumns.join(',')})` }], dangerous: false });
+        }
       }
     }
   }
   for (const bt of base.tables) {
-    if (!new Set(target.tables.map((t) => t.name.toLowerCase())).has(bt.name.toLowerCase())) {
+    if (!targetNames.has(bt.name.toLowerCase())) {
       items.push({ level: 'table', table: bt.name, object: bt.name, kind: 'removed', changes: [{ prop: 'table', from: bt.name, to: '-' }], dangerous: true });
     }
   }
@@ -121,6 +144,8 @@ function normDefault(s?: string): string {
 
 function columnChanges(base: ColumnDef, target: ColumnDef, opts: DiffOptions = {}, baseDialect?: DictionaryModel['dialect'], targetDialect?: DictionaryModel['dialect']): DiffChange[] {
   const changes: DiffChange[] = [];
+  // 推测字段（如 HTML 只给了主键名、没给字段定义）不参与属性比对，避免伪造差异
+  if (base.guessed || target.guessed) return changes;
   const sameType = typesEquivalent(base.type, target.type, {
     ignoreIntegerWidth: opts.ignoreIntegerWidth,
     unknownLengthWildcard: true,
@@ -134,8 +159,12 @@ function columnChanges(base: ColumnDef, target: ColumnDef, opts: DiffOptions = {
   if (!opts.ignoreNullable && (base.nullable !== false) !== (target.nullable !== false)) {
     changes.push({ prop: '可空', from: base.nullable === false ? 'NOT NULL' : 'NULL', to: target.nullable === false ? 'NOT NULL' : 'NULL' });
   }
-  if (!opts.ignoreComments && normComment(base.comment) !== normComment(target.comment)) {
-    changes.push({ prop: '注释', from: base.comment || '-', to: target.comment || '-' });
+  // 注释比对时把“显示名(code)”作为注释的兜底：PDM 常把中文名放在 code，comment 为空，
+  // 直接按 comment 比会对每个字段都报“注释 → 空”的假差异
+  const baseComment = normComment(base.comment || base.code);
+  const targetComment = normComment(target.comment || target.code);
+  if (!opts.ignoreComments && baseComment !== targetComment) {
+    changes.push({ prop: '注释', from: base.comment || base.code || '-', to: target.comment || target.code || '-' });
   }
   if (!opts.ignoreDefaults && normDefault(base.defaultValue) !== normDefault(target.defaultValue)) {
     changes.push({ prop: '默认值', from: base.defaultValue || '-', to: target.defaultValue || '-' });
@@ -150,20 +179,30 @@ export function generateFixSql(base: DictionaryModel, target: DictionaryModel, i
   const raw = base.dialect && base.dialect !== 'generic' ? base.dialect : target.dialect;
   const dialect = raw === 'postgres' ? 'pg' : raw === 'mssql' ? 'mssql' : raw === 'oracle' ? 'oracle' : 'mysql';
   const sqls: string[] = [];
-  const q = (n: string) => (dialect === 'mysql' ? `\`${n}\`` : dialect === 'mssql' ? `[${n}]` : `"${n}"`);
+  const q = (n: string) => (dialect === 'mysql' ? `\`${n.replace(/`/g, '``')}\`` : dialect === 'mssql' ? `[${n.replace(/]/g, ']]')}]` : `"${n.replace(/"/g, '""')}"`);
   const full = !!opts.fullCompare;
   const baseNames = new Set(base.tables.map((t) => t.name.toLowerCase()));
+  const baseIndex = new Map<string, TableDef>();
+  for (const t of base.tables) {
+    const k = t.name.toLowerCase();
+    if (!baseIndex.has(k)) baseIndex.set(k, t);
+  }
 
   for (const tt of target.tables) {
     // 只为基线返回的表生成 SQL；字典额外表不生成 CREATE
     if (!full && !baseNames.has(tt.name.toLowerCase())) continue;
-    const bt = findTable(base, tt.name);
+    const bt = baseIndex.get(tt.name.toLowerCase());
     if (!bt) {
       sqls.push(createTableSql(tt, dialect, q));
       continue;
     }
+    const baseCols = new Map<string, ColumnDef>();
+    for (const c of bt.columns) {
+      const k = c.name.toLowerCase();
+      if (!baseCols.has(k)) baseCols.set(k, c);
+    }
     for (const tc of tt.columns) {
-      const bc = findColumn(bt, tc.name);
+      const bc = baseCols.get(tc.name.toLowerCase());
       if (!bc) {
         if (opts.metadataBaseline) continue;
         if (dialect === 'mssql') sqls.push(`ALTER TABLE ${q(tt.name)} ADD ${columnDefSql(tc, dialect, q)};`);
@@ -204,7 +243,7 @@ export function generateFixSql(base: DictionaryModel, target: DictionaryModel, i
         }
         if (changed.some((c) => c.prop === '默认值')) {
           sqls.push(tc.defaultValue
-            ? `ALTER TABLE ${q(tt.name)} ALTER COLUMN ${q(tc.name)} SET DEFAULT ${tc.defaultValue};`
+            ? `ALTER TABLE ${q(tt.name)} ALTER COLUMN ${q(tc.name)} SET DEFAULT ${defaultExpr(tc.defaultValue)};`
             : `ALTER TABLE ${q(tt.name)} ALTER COLUMN ${q(tc.name)} DROP DEFAULT;`);
         }
         if (changed.some((c) => c.prop === '注释')) {
@@ -222,12 +261,14 @@ export function generateFixSql(base: DictionaryModel, target: DictionaryModel, i
         }
       }
     }
+    const baseIdx = new Map(bt.indexes.map((i) => [i.name.toLowerCase(), i]));
     for (const ti of tt.indexes) {
       if (opts.skipRelations) break;
-      const bi = bt.indexes.find((i) => i.name.toLowerCase() === ti.name.toLowerCase());
+      const bi = baseIdx.get(ti.name.toLowerCase());
       if (!bi) {
         sqls.push(`CREATE ${ti.unique ? 'UNIQUE ' : ''}INDEX ${q(ti.name)} ON ${q(tt.name)} (${ti.columns.map(q).join(', ')});`);
-      } else if (bi.columns.join(',').toLowerCase() !== ti.columns.join(',').toLowerCase() || bi.unique !== ti.unique) {
+      } else if (bi.columns.join(',').toLowerCase() !== ti.columns.join(',').toLowerCase()
+        || (bi.uniqueKnown !== false && ti.uniqueKnown !== false && bi.unique !== ti.unique)) {
         if (dialect === 'mysql') sqls.push(`ALTER TABLE ${q(tt.name)} DROP INDEX ${q(bi.name)};`);
         else if (dialect === 'mssql') sqls.push(`DROP INDEX ${q(bi.name)} ON ${q(tt.name)};`);
         else if (dialect === 'oracle') sqls.push(`DROP INDEX ${q(bi.name)};`);
@@ -235,9 +276,10 @@ export function generateFixSql(base: DictionaryModel, target: DictionaryModel, i
         sqls.push(`CREATE ${ti.unique ? 'UNIQUE ' : ''}INDEX ${q(ti.name)} ON ${q(tt.name)} (${ti.columns.map(q).join(', ')});`);
       }
     }
+    const baseFks = new Map(bt.foreignKeys.map((f) => [f.name.toLowerCase(), f]));
     for (const tf of tt.foreignKeys) {
-      if (opts.skipRelations) break;
-      const bf = bt.foreignKeys.find((f) => f.name.toLowerCase() === tf.name.toLowerCase());
+      if (opts.skipRelations || opts.skipForeignKeys) break;
+      const bf = baseFks.get(tf.name.toLowerCase());
       if (!bf) {
         sqls.push(`ALTER TABLE ${q(tt.name)} ADD CONSTRAINT ${q(tf.name)} FOREIGN KEY (${tf.columns.map(q).join(', ')}) REFERENCES ${q(tf.refTable)} (${tf.refColumns.map(q).join(', ')});`);
       }
@@ -252,10 +294,28 @@ export function generateFixSql(base: DictionaryModel, target: DictionaryModel, i
   return sqls;
 }
 
+function defaultExpr(raw: string): string {
+  let s = String(raw ?? '').trim();
+  for (let i = 0; i < 3; i++) {
+    const m = s.match(/^\((.*)\)$/);
+    if (!m) break;
+    s = m[1].trim();
+  }
+  if (!s) return "''";
+  if (/^(current_timestamp|now\(\)|getdate\(\)|sysdatetime\(\)|newid\(\)|NULL)$/i.test(s)) return s;
+  if (/^-?\d+(?:\.\d+)?$/.test(s)) return s;
+  // N'x' / 'x'：保留 N 前缀，内部单引号转义，避免 O'Reilly 这类默认值把 SQL 拼坏
+  const nq = s.match(/^N'([\s\S]*)'$/i);
+  if (nq) return `N'${nq[1].replace(/'/g, "''")}'`;
+  const q = s.match(/^'([\s\S]*)'$/);
+  if (q) return `'${q[1].replace(/'/g, "''")}'`;
+  return `'${s.replace(/'/g, "''")}'`;
+}
+
 function columnDefSql(c: ColumnDef, dialect: string, q: (n: string) => string, opts: { noDefault?: boolean } = {}): string {
   const parts = [q(c.name), c.type || 'varchar'];
   const dft = !opts.noDefault && c.defaultValue !== undefined && c.defaultValue !== '' && !c.autoIncrement
-    ? `DEFAULT ${/^(current_timestamp|now\(\)|getdate\(\)|\d+(\.\d+)?|'(.*)'|NULL|N'(.*)')$/i.test(c.defaultValue) ? c.defaultValue : `'${c.defaultValue}'`}`
+    ? `DEFAULT ${defaultExpr(c.defaultValue)}`
     : '';
   if (dialect === 'mysql') {
     if (c.autoIncrement) parts.push('AUTO_INCREMENT');
@@ -307,21 +367,39 @@ function commentColumnSql(table: string, c: ColumnDef, dialect: string, q: (n: s
 export function mergeBaseIntoTarget(base: DictionaryModel, target: DictionaryModel, opts: DiffOptions = {}): DictionaryModel {
   const full = !!opts.fullCompare;
   const merged: DictionaryModel = JSON.parse(JSON.stringify(target));
+  // 大字典下逐表 find 是 O(n²)，这里先建表索引
+  const tableIndex = new Map<string, TableDef>();
+  for (const t of merged.tables) {
+    const k = t.name.toLowerCase();
+    if (!tableIndex.has(k)) tableIndex.set(k, t);
+  }
   for (const bt of base.tables) {
-    const tt = findTable(merged, bt.name);
+    const key = bt.name.toLowerCase();
+    let tt = tableIndex.get(key);
     if (!tt) {
       const copy: TableDef = JSON.parse(JSON.stringify(bt));
       copy.changeTag = 'added';
       merged.tables.push(copy);
+      tableIndex.set(key, copy);
       continue;
     }
     tt.comment = bt.comment ?? tt.comment;
+    // 索引/外键也按基线回写；WebAPI 元数据没有这些信息时保留字典原值
+    if (bt.indexes.length) tt.indexes = JSON.parse(JSON.stringify(bt.indexes));
+    if (bt.foreignKeys.length) tt.foreignKeys = JSON.parse(JSON.stringify(bt.foreignKeys));
+    const colIndex = new Map<string, ColumnDef>();
+    for (const c of tt.columns) {
+      const k = c.name.toLowerCase();
+      if (!colIndex.has(k)) colIndex.set(k, c);
+    }
     for (const bc of bt.columns) {
-      const tc = findColumn(tt, bc.name);
+      const ck = bc.name.toLowerCase();
+      const tc = colIndex.get(ck);
       if (!tc) {
         const copy: ColumnDef = JSON.parse(JSON.stringify(bc));
         copy.changeTag = 'added';
         tt.columns.push(copy);
+        colIndex.set(ck, copy);
       } else {
         const changed = columnChanges(tc, bc, opts, target.dialect, base.dialect);
         if (changed.length) {

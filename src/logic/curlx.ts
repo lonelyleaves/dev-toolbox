@@ -207,3 +207,21 @@ export function generateCode(p: ParsedCurl, lang: 'fetch' | 'axios' | 'python' |
     }
   }
 }
+
+/**
+ * 历史/持久化前的 curl 脱敏：避免 Authorization、Cookie、-u 等凭据落到 workspaceState。
+ * 只改写入存储的内容，当前编辑框仍保留原文。
+ */
+export function redactCurlCommand(command: string): string {
+  let s = String(command || '');
+  // -H 'Authorization: Bearer xxx' / Cookie / API key 类头
+  s = s.replace(
+    /((?:-H|--header)\s+["']?(?:Authorization|Proxy-Authorization|Cookie|X-Api-Key|X-Auth-Token|Token)\s*:\s*)[^"'\r\n]+/gi,
+    '$1***',
+  );
+  // -u user:pass / --user user:pass
+  s = s.replace(/((?:-u|--user)\s+)(?:"[^"]*"|'[^']*'|\S+)/gi, '$1***');
+  // URL 里的 user:pass@host
+  s = s.replace(/(https?:\/\/)([^/\s:@]+):([^/\s@]+)@/gi, '$1***:***@');
+  return s;
+}

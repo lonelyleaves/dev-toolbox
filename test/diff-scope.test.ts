@@ -187,3 +187,23 @@ describe('WebAPI 基线：跳过索引/外键 + 用基线方言出 SQL', () => {
     expect(sql).not.toContain('MODIFY COLUMN');
   });
 });
+
+describe('HTML 基线降噪', () => {
+  it('字典中文名在 code、注释为空时，不再报“注释 → 空”假差异', () => {
+    const b = mkDict('html', [table('T', [{ name: 'F', type: 'int', code: '开户国家' } as any])]);
+    const t = mkDict('dict', [table('T', [{ name: 'F', type: 'int', code: '开户国家' } as any])]);
+    const items = diffDictionaries(b, t);
+    expect(items.some((i) => i.changes.some((c) => c.prop === '注释'))).toBe(false);
+  });
+
+  it('skipForeignKeys：不比对/不生成外键 SQL（HTML 无引用表信息）', () => {
+    const b = mkDict('html', [table('T', [col('F', 'int')])]);
+    const t = mkDict('dict', [{
+      name: 'T', columns: [col('F', 'int')], indexes: [],
+      foreignKeys: [{ name: 'FK_T_X', columns: ['F'], refTable: 'X', refColumns: ['F'] }],
+    }]);
+    expect(diffDictionaries(b, t).some((i) => i.level === 'fk')).toBe(true);
+    expect(diffDictionaries(b, t, { skipForeignKeys: true }).some((i) => i.level === 'fk')).toBe(false);
+    expect(generateFixSql(b, t, false, { skipForeignKeys: true }).join('\n')).not.toContain('FOREIGN KEY');
+  });
+});

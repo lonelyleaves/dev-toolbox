@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  mergeDictionaries, applyResolutions, removeSource, mergeAll, normalizeName, defaultResolutions,
+  mergeDictionaries, mergeBatchIntoBase, applyResolutions, removeSource, mergeAll, normalizeName, defaultResolutions,
 } from '../src/dictionary/merge';
 import { emptyDictionary, migrateDict, DictionaryModel, DictSource, makeSourceId } from '../src/dictionary/model';
 
@@ -99,6 +99,64 @@ describe('多来源合并', () => {
   });
 });
 
+describe('默认值冲突归一', () => {
+  const withDefault = (def: string) => {
+    const d = dictWith([{ name: 't', cols: [{ name: 'f', type: 'nvarchar(255)' }] }]);
+    d.tables[0].columns[0].defaultValue = def;
+    return d;
+  };
+
+  it('空字符串只差引号/空白时不产生冲突', () => {
+    const r = mergeDictionaries(withDefault("''"), withDefault("'' "), src('s2', 'B'));
+    expect(r.conflicts.filter((c) => c.field === 'default')).toHaveLength(0);
+  });
+
+  it("((0)) 与 0、N'x' 与 'x' 视为同一默认值", () => {
+    expect(mergeDictionaries(withDefault('((0))'), withDefault('0'), src('s2', 'B')).conflicts).toHaveLength(0);
+    expect(mergeDictionaries(withDefault("N'x'"), withDefault("'x'"), src('s2', 'B')).conflicts).toHaveLength(0);
+  });
+
+  it("'' 与 '0' 仍然报默认值冲突", () => {
+    const r = mergeDictionaries(withDefault("''"), withDefault("'0'"), src('s2', 'B'));
+    expect(r.conflicts.filter((c) => c.field === 'default')).toHaveLength(1);
+  });
+});
+
+describe('批量合并（多选 PDM）', () => {
+  it('多个文件按顺序并入，来源都登记', () => {
+    const base = dictWith([{ name: 't_a', cols: [{ name: 'id' }] }]);
+    const f1 = dictWith([
+      { name: 't_a', cols: [{ name: 'id' }, { name: 'x' }] },
+      { name: 't_b', cols: [{ name: 'id' }] },
+    ]);
+    const f2 = dictWith([{ name: 't_c', cols: [{ name: 'id' }] }]);
+
+    const r = mergeBatchIntoBase(base, [
+      { source: src('s1', 'a.pdm'), dict: f1 },
+      { source: src('s2', 'b.pdm'), dict: f2 },
+    ]);
+
+    expect(r.dict.sources!.map((s) => s.name)).toEqual(['a.pdm', 'b.pdm']);
+    expect(r.dict.tables.map((t) => t.name)).toEqual(['t_a', 't_b', 't_c']);
+    expect(r.stats.tablesAdded).toBe(2);
+  });
+
+  it('同一字段冲突只保留最后一次，来源名是后一个文件', () => {
+    const base = dictWith([{ name: 't', cols: [{ name: 'id', comment: 'old' }] }]);
+    const f1 = dictWith([{ name: 't', cols: [{ name: 'id', comment: 'A' }] }]);
+    const f2 = dictWith([{ name: 't', cols: [{ name: 'id', comment: 'B' }] }]);
+
+    const r = mergeBatchIntoBase(base, [
+      { source: src('s1', 'a.pdm'), dict: f1 },
+      { source: src('s2', 'b.pdm'), dict: f2 },
+    ]);
+
+    expect(r.conflicts.length).toBe(1);
+    expect(r.conflicts[0].incomingValue).toBe('B');
+    expect(r.conflicts[0].incomingSourceName).toBe('b.pdm');
+  });
+});
+
 describe('冲突决议', () => {
   const base = dictWith([{ name: 't_user', cols: [{ name: 'id', comment: '主键' }, { name: 'age', type: 'varchar(10)' }] }]);
   const inc = dictWith([{ name: 't_user', cols: [{ name: 'id', comment: '用户ID' }, { name: 'age', type: 'int' }] }]);
@@ -125,6 +183,15 @@ describe('冲突决议', () => {
     const applied = applyResolutions(r.dict, r.conflicts, defaultResolutions(r.conflicts, 'base'));
     expect(applied.tables[0].columns[0].comment).toBe('主键');
     expect(applied.tables[0].columns[1].type).toBe('varchar(10)');
+  });
+
+  it('表名/字段名大小写不同也能定位并应用', () => {
+    const d = dictWith([{ name: 'T_USER', cols: [{ name: 'ID', comment: 'old' }] }]);
+    const applied = applyResolutions(d, [{
+      id: 'T_USER|ID|comment', table: 't_user', column: 'id', field: 'comment',
+      incomingValue: 'new', incomingSourceName: '库',
+    }], { 'T_USER|ID|comment': 'incoming' });
+    expect(applied.tables[0].columns[0].comment).toBe('new');
   });
 });
 

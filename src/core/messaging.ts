@@ -18,7 +18,7 @@ export interface WvResponse {
 /** 宿主主动推送（初始化工具、注入选区内容等） */
 export interface WvPush {
   kind: 'push';
-  event: 'openTool' | 'prefill' | 'ready';
+  event: 'openTool' | 'prefill' | 'ready' | 'dbProgress';
   toolId: string;
   payload?: unknown;
 }
@@ -98,6 +98,8 @@ export type CryptoOpsResult =
 export interface NamedDbConfig extends DbConnectionConfig {
   id: string;
   name: string;
+  /** 名称是否由主机自动生成（用户在连接配置里重命名后为 false） */
+  autoName?: boolean;
 }
 
 export interface NamedKingdeeConfig extends KingdeeConnectionConfig {
@@ -123,11 +125,32 @@ function toNamedList<T extends object>(raw: unknown, defName: string): (T & { id
   return Object.keys(obj).length ? [{ ...obj, id: DEFAULT_CONFIG_ID, name: defName } as T & { id: string; name: string }] : [];
 }
 
+/** 旧配置没有 autoName：按名称形态推断是否自动命名（避免覆盖用户自定义名） */
+function inferDbAutoName(c: any): boolean {
+  const n = String(c?.name || '').trim();
+  if (!n) return true;
+  if (n === '默认数据库' || /^数据库\s*\d+$/.test(n)) return true;
+  if (n === '127.0.0.1') return true;
+  const host = String(c?.host || '').trim();
+  const db = String(c?.database || '').trim();
+  return !!host && (n === host || n === `${host}/${db}`);
+}
+
+/** 数据库配置的自动名称：优先主机，其次库名 */
+function autoDbName(c: any): string {
+  return String(c?.host || '').trim() || String(c?.database || '').trim();
+}
+
 /** 把任意形态（旧单对象/新数组）的连接配置归一化为数组结构 */
 export function normalizeConnections(cfg: any): ProjectConfig {
+  const dbs = toNamedList<DbConnectionConfig>(cfg?.connections?.db, '默认数据库').map((c) => {
+    const autoName = (c as any).autoName ?? inferDbAutoName(c);
+    const auto = autoName ? autoDbName(c) : '';
+    return { ...c, autoName, name: auto || c.name } as NamedDbConfig;
+  });
   return {
     connections: {
-      db: toNamedList<DbConnectionConfig>(cfg?.connections?.db, '默认数据库'),
+      db: dbs,
       kingdee: toNamedList<KingdeeConnectionConfig>(cfg?.connections?.kingdee, '默认金蝶'),
     },
   };
@@ -164,6 +187,7 @@ export type HostCommand =
   | 'saveTextFile'
   | 'saveBinaryFile'
   | 'openTextFile'
+  | 'openTextFiles'
   | 'readTextFileAt'
   | 'projectList'
   | 'projectCreate'

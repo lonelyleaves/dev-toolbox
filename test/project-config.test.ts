@@ -33,6 +33,17 @@ describe('项目连接配置存储（多配置 + 旧单配置迁移）', () => {
     expect(cfg.connections.kingdee![0].argStyle).toBe('named');
   });
 
+  it('autoName 标记持久化：用户重命名后不会被重新自动命名', () => {
+    const { store } = makeStore();
+    const p = store.create('D客户');
+    store.saveConfig(p.id, {
+      connections: { db: [{ id: 'd1', name: '生产库', autoName: false, host: '10.0.3.60', database: 'ERP' }] },
+    });
+    const db = store.loadConfig(p.id).connections.db![0];
+    expect(db.name).toBe('生产库');
+    expect(db.autoName).toBe(false);
+  });
+
   it('多配置数组原样保存读回', () => {
     const { store } = makeStore();
     const p = store.create('C客户');

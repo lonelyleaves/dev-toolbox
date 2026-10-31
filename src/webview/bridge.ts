@@ -30,7 +30,10 @@ window.addEventListener('message', (e) => {
       cb(msg);
     }
   } else if (msg.kind === 'push') {
-    for (const h of bridge.pushHandlers) h(msg);
+    // 单个 handler 异常不能阻断后续 handler（openTool/prefill 等）
+    for (const h of bridge.pushHandlers) {
+      try { h(msg); } catch (e) { console.error('[dev-toolbox] push handler failed', e); }
+    }
   }
 });
 
@@ -51,6 +54,7 @@ export const host = {
   saveTextFile: (defaultName: string, content: string) => call<boolean>('saveTextFile', { defaultName, content }),
   saveBinaryFile: (defaultName: string, base64: string) => call<boolean>('saveBinaryFile', { defaultName, base64 }),
   openTextFile: () => call<{ name: string; path?: string; content: string } | null>('openTextFile'),
+  openTextFiles: (extensions?: string[]) => call<{ name: string; path?: string; content: string }[]>('openTextFiles', { extensions }),
   readTextFileAt: (path: string) => call<{ ok: boolean; content?: string; error?: string }>('readTextFileAt', { path }),
 
   // ---------- 项目库（数据字典持久化，跨工作区复用） ----------
@@ -84,13 +88,13 @@ export const host = {
 
   // ---------- 金蝶云星空 ----------
   kingdeeFetchMetadata: (formIds: string[], opts?: { projectId?: string; configId?: string; appSecret?: string; password?: string }) =>
-    call<{ ok: boolean; text?: string; error?: string }>('kingdeeFetchMetadata', { formIds, ...(opts || {}) }, 60000),
+    call<{ ok: boolean; text?: string; error?: string }>('kingdeeFetchMetadata', { formIds, ...(opts || {}) }, Math.max(60000, formIds.length * 35000 + 15000)),
   kingdeeSaveSecret: (appSecret?: string, password?: string, projectId?: string, configId?: string) =>
     call<boolean>('kingdeeSaveSecret', { appSecret, password, projectId, configId }),
   openBinaryFile: () => call<{ name: string; base64: string } | null>('openBinaryFile'),
   httpRequest: (payload: any) => call<HttpResponseData>('httpRequest', payload, (payload.timeoutMs ?? 30000) + 5000),
   dbTestConnection: (info: DbConnInfo) => call<string>('dbTestConnection', info, 20000),
-  dbIntrospect: (info: DbConnInfo) => call<DictionaryModel>('dbIntrospect', info, 120000),
+  dbIntrospect: (info: DbConnInfo, progressId?: string) => call<DictionaryModel>('dbIntrospect', { info, progressId }, 300000),
   dbSavePassword: (info: DbConnInfo, password: string) => call('dbSavePassword', { info, password }),
 
   // ---------- 密码学 / 字符编码运算（宿主 node:crypto + ICU） ----------

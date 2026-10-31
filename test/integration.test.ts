@@ -111,7 +111,7 @@ describe('字典持久化（项目库）', () => {
     expect(page).toContain("host.projectCreate(old.name || '默认项目')");
   });
   it('导入走合并而不是整份覆盖', () => {
-    expect(page).toContain('mergeDictionaries(');
+    expect(page).toContain('mergeBatchIntoBase(');
     expect(page).toContain('applyResolutions(');
   });
 });

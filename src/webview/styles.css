@@ -133,6 +133,7 @@ body {
 
 /* 虚拟列表：外层负责滚动，内层用绝对定位只渲染可视行 */
 .vlist { flex: 1; min-height: 0; overflow: auto; position: relative; }
+.vlist:focus { outline: 1px solid var(--vscode-focusBorder, #007fd4); outline-offset: -1px; }
 .vlist-inner { position: relative; width: 100%; }
 .vrow {
   position: absolute; left: 0; right: 0; height: var(--dt-row-h, 24px);
@@ -263,10 +264,10 @@ textarea.code {
   border: none;
   box-shadow: none;
 }
-/* 只读结果区：保留行号与选择复制，不显示可编辑光标 */
+/* 只读结果区：保留行号与选择复制；可纵向拖拽调整高度 */
 .code-wrap > textarea.code.readonly {
   cursor: default;
-  resize: none;
+  resize: vertical;
 }
 .code-gutter {
   flex: none;
@@ -341,6 +342,54 @@ code { background: var(--vscode-textCodeBlock-background); border-radius: 4px; p
 .form-grid .fld > input, .form-grid .fld > select { width: 100%; box-sizing: border-box; }
 .grow { flex: 1; min-width: 0; }
 .muted { opacity: 0.65; }
+
+/* 页面内确认/输入弹窗（Webview 不支持原生 confirm/prompt） */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+}
+.modal-card {
+  width: min(420px, calc(100vw - 40px));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 8px;
+  border: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 18%, transparent));
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+.modal-title { font-weight: 600; }
+.modal-body { line-height: 1.5; word-break: break-word; }
+.modal-card input[type="text"] { width: 100%; box-sizing: border-box; }
+
+/* 导入进度条：阶段进度可确定时按百分比，否则显示流动指示条 */
+.progress-wrap { display: flex; flex-direction: column; gap: 4px; }
+.progress-track {
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+.progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+.progress-fill.indeterminate {
+  width: 40%;
+  animation: dt-progress 1.2s ease-in-out infinite;
+}
+@keyframes dt-progress {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
 .small { font-size: 11px; }
 .mono { font-family: var(--vscode-editor-font-family); }
 .nowrap { white-space: nowrap; }
@@ -381,6 +430,21 @@ table.tbl th.tight, table.tbl td.tight {
 table.tbl tr:last-child td { border-bottom: none; }
 table.tbl tr:nth-child(even) td { background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent); }
 table.tbl tr:hover td { background: var(--vscode-list-hoverBackground); }
+
+/* 合并冲突表：固定高度内滚动，表头吸顶，避免几千条差异把页面撑到看不见 */
+.merge-table-wrap {
+  max-height: 60vh;
+  overflow: auto;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--radius-sm);
+}
+.merge-table-wrap table.tbl { margin: 0; }
+.merge-table-wrap table.tbl thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+}
 
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; font-size: 12px; }
 .kv .k { opacity: 0.7; }

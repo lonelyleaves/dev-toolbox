@@ -1,6 +1,6 @@
 import { h } from 'preact';
 import { useState, useMemo, useEffect, useRef } from 'preact/hooks';
-import { Btn, Section } from '../../components';
+import { Btn, Section, useConfirm, usePrompt } from '../../components';
 import { ProjectMeta, ProjectConfig } from '../../../core/messaging';
 import { host } from '../../bridge';
 import { parseKingdeeMetadata } from '../../../dictionary/kingdee';
@@ -47,6 +47,8 @@ export function ProjectBar(p: {
   onConfig: () => void;
 }) {
   const [name, setName] = useState('');
+  const { confirm, confirmNode } = useConfirm();
+  const { prompt, promptNode } = usePrompt();
   const cur = p.projects.find((x) => x.id === p.currentId);
   const dbOk = !!cur?.configSummary?.db;
   const kdOk = !!cur?.configSummary?.kingdee;
@@ -79,11 +81,13 @@ export function ProjectBar(p: {
         onInput={(e) => setName((e.target as HTMLInputElement).value)}
       />
       <Btn onClick={() => { if (name.trim()) { p.onCreate(name.trim()); setName(''); } }}>+ 新建项目</Btn>
-      <Btn onClick={() => { const n = cur ? prompt('重命名项目', cur.name) : null; if (n && n.trim()) p.onRename(n.trim()); }}>重命名</Btn>
+      <Btn onClick={async () => { const n = cur ? await prompt('重命名项目', cur.name) : null; if (n && n.trim()) p.onRename(n.trim()); }}>重命名</Btn>
       <Btn onClick={p.onImport}>导入项目包</Btn>
       <Btn onClick={p.onExport}>导出项目包</Btn>
-      <Btn onClick={() => { if (cur && confirm(`清空项目「${cur.name}」的所有字典数据与来源？项目本身保留。`)) p.onClear(); }}>清空</Btn>
-      <Btn onClick={() => { if (cur && confirm(`删除项目「${cur.name}」？该项目的字典数据将一并删除。`)) p.onDelete(); }}>删除</Btn>
+      <Btn onClick={async () => { if (cur && await confirm(`清空项目「${cur.name}」的所有字典数据与来源？项目本身保留。`)) p.onClear(); }}>清空</Btn>
+      <Btn onClick={async () => { if (cur && await confirm(`删除项目「${cur.name}」？该项目的字典数据将一并删除。`)) p.onDelete(); }}>删除</Btn>
+      {confirmNode}
+      {promptNode}
     </div>
   );
 }
@@ -101,6 +105,7 @@ export function SourcesPanel(p: {
   hash?: Record<string, string>;
 }) {
   const sources = p.dict.sources || [];
+  const { confirm, confirmNode } = useConfirm();
 
   /** 判断该来源的缓存是否已过期（对应配置的连接指纹变了）；按 kind__configId 槽位取 */
   const staleNow = (s: any) => {
@@ -146,7 +151,7 @@ export function SourcesPanel(p: {
                   {' '}
                   <a class="link" href="#" onClick={(e) => { e.preventDefault(); p.onToggle(s.id); }}>{s.enabled ? '禁用' : '启用'}</a>
                   {' '}
-                  <a class="link" href="#" onClick={(e) => { e.preventDefault(); if (confirm(`移除来源「${s.name}」？该来源带来的表与字段会一并删除。`)) p.onRemove(s.id); }}>移除</a>
+                  <a class="link" href="#" onClick={async (e) => { e.preventDefault(); if (await confirm(`移除来源「${s.name}」？该来源带来的表与字段会一并删除。`)) p.onRemove(s.id); }}>移除</a>
                 </td>
               </tr>
             ))}
@@ -154,6 +159,7 @@ export function SourcesPanel(p: {
         </table>
       </Section>
       <div class="toolbar"><Btn primary onClick={p.onAdd}>+ 导入新来源</Btn></div>
+      {confirmNode}
     </div>
   );
 }
@@ -285,6 +291,20 @@ export function MergePanel(p: {
   onApply: () => void;
   onCancel: () => void;
 }) {
+  /** 冲突值展示：空字符串不要显示成两个引号，避免原值/新值看起来一样 */
+  const val = (v?: string | null) => {
+    const s = String(v ?? '');
+    if (!s) return <span class="muted">空</span>;
+    if (s === "''" || s === '""') return <span class="muted">空字符串</span>;
+    return s;
+  };
+  // 几千条冲突不能一次性渲染（每个 select 都是 DOM），分页保证 webview 不卡死
+  const PAGE_SIZE = 200;
+  const pageCount = Math.max(1, Math.ceil(p.conflicts.length / PAGE_SIZE));
+  const [page, setPage] = useState(0);
+  useEffect(() => { setPage(0); }, [p.conflicts.length]);
+  const curPage = Math.min(page, pageCount - 1);
+  const shown = p.conflicts.slice(curPage * PAGE_SIZE, (curPage + 1) * PAGE_SIZE);
   const set = (id: string, v: 'base' | 'incoming') => p.setResolutions({ ...p.resolutions, [id]: v });
   const all = (v: 'base' | 'incoming') => {
     const r: Record<string, 'base' | 'incoming'> = {};
@@ -297,32 +317,41 @@ export function MergePanel(p: {
         新增 {p.stats.tablesAdded} 张表 / {p.stats.columnsAdded} 个字段，匹配上 {p.stats.tablesMatched} 张表。
         以下差异默认保留原值，请逐条选择或批量处理：
       </div>
-      <div class="toolbar" style="margin-bottom:8px">
+      <div class="toolbar" style="margin-bottom:8px;flex-wrap:wrap">
         <Btn onClick={() => all('base')}>全部保留原值</Btn>
         <Btn onClick={() => all('incoming')}>全部采用新值</Btn>
         <Btn primary onClick={p.onApply}>应用并合并</Btn>
         <Btn onClick={p.onCancel}>取消本次导入</Btn>
+        <span class="grow" />
+        <span class="small muted">共 {p.conflicts.length} 条 · 第 {curPage + 1}/{pageCount} 页（每页 {PAGE_SIZE} 条）</span>
+        <Btn onClick={() => setPage(Math.max(0, curPage - 1))} disabled={curPage === 0}>上一页</Btn>
+        <Btn onClick={() => setPage(Math.min(pageCount - 1, curPage + 1))} disabled={curPage >= pageCount - 1}>下一页</Btn>
       </div>
-      <table class="tbl">
-        <thead><tr><th>表</th><th>字段</th><th>项</th><th>原值</th><th>新值</th><th>选择</th></tr></thead>
-        <tbody>
-          {p.conflicts.map((c) => (
-            <tr>
-              <td class="mono">{c.table}</td>
-              <td class="mono">{c.column || '（表级）'}</td>
-              <td>{FIELD_LABEL[c.field] || c.field}</td>
-              <td>{String(c.baseValue ?? '') || <span class="muted">空</span>}</td>
-              <td>{String(c.incomingValue ?? '') || <span class="muted">空</span>}</td>
-              <td>
-                <select value={p.resolutions[c.id] ?? 'base'} onInput={(e) => set(c.id, (e.target as HTMLSelectElement).value as 'base' | 'incoming')}>
-                  <option value="base">保留原值</option>
-                  <option value="incoming">采用新值</option>
-                </select>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div class="merge-table-wrap">
+        <table class="tbl">
+          <thead><tr><th>表</th><th>字段</th><th>项</th><th>原值</th><th>新值</th><th>选择</th></tr></thead>
+          <tbody>
+            {shown.map((c) => (
+              <tr>
+                <td class="mono">{c.table}</td>
+                <td class="mono">{c.column || '（表级）'}</td>
+                <td>{FIELD_LABEL[c.field] || c.field}</td>
+                <td>{val(c.baseValue)}</td>
+                <td>
+                  {val(c.incomingValue)}
+                  {c.incomingSourceName && <div class="small muted">{c.incomingSourceName}</div>}
+                </td>
+                <td>
+                  <select value={p.resolutions[c.id] ?? 'base'} onInput={(e) => set(c.id, (e.target as HTMLSelectElement).value as 'base' | 'incoming')}>
+                    <option value="base">保留原值</option>
+                    <option value="incoming">采用新值</option>
+                  </select>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </Section>
   );
 }
@@ -358,6 +387,8 @@ export function ProjectConfigPanel(p: {
   onSave: (cfg: import('../../../core/messaging').ProjectConfig, secrets: { dbPassword?: string; appSecret?: string; password?: string; dbConfigId?: string; kdConfigId?: string }) => Promise<void> | void;
 }) {
   const newConfigId = () => `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const { confirm, confirmNode } = useConfirm();
+  const { prompt, promptNode } = usePrompt();
   const [dbs, setDbs] = useState<any[]>((p.config.connections?.db || []).map((d: any) => ({ ...d })));
   const [kds, setKds] = useState<any[]>((p.config.connections?.kingdee || []).map((k: any) => ({ ...k })));
   const [selDb, setSelDb] = useState<string>(dbs[0]?.id ?? '');
@@ -393,12 +424,21 @@ export function ProjectConfigPanel(p: {
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const setList = (setter: any, list: any[], id: string, patch: any) => setter(list.map((x) => (x.id === id ? { ...x, ...patch } : x)));
-  const onDbField = (k: string, v: any) => setList(setDbs, dbs, db.id, { [k]: v });
+  const onDbField = (k: string, v: any) => {
+    const patch: any = { [k]: v };
+    // 自动命名的配置随主机变化（用户重命名过 autoName=false 则不动）
+    if (db.autoName !== false && (k === 'host' || k === 'database')) {
+      const host = k === 'host' ? String(v || '').trim() : String(db.host || '').trim();
+      const database = k === 'database' ? String(v || '').trim() : String(db.database || '').trim();
+      if (host || database) patch.name = host || database;
+    }
+    setList(setDbs, dbs, db.id, patch);
+  };
   const onKdField = (k: string, v: any) => setList(setKds, kds, kd.id, { [k]: v });
 
-  const addDb = () => { const id = newConfigId(); setDbs([...dbs, { id, name: `数据库 ${dbs.length + 1}`, client: 'mysql', port: 3306 }]); setSelDb(id); };
+  const addDb = () => { const id = newConfigId(); setDbs([...dbs, { id, name: `数据库 ${dbs.length + 1}`, autoName: true, client: 'mysql', port: 3306 }]); setSelDb(id); };
   const delDb = (id: string) => { const next = dbs.filter((x) => x.id !== id); setDbs(next); if (selDb === id) setSelDb(next[0]?.id ?? ''); };
-  const renameDb = (id: string) => { const cur = dbs.find((x) => x.id === id); const n = prompt('重命名数据库配置', cur?.name || ''); if (n && n.trim()) setList(setDbs, dbs, id, { name: n.trim() }); };
+  const renameDb = async (id: string) => { const cur = dbs.find((x) => x.id === id); const n = await prompt('重命名数据库配置', cur?.name || ''); if (n && n.trim()) setList(setDbs, dbs, id, { name: n.trim(), autoName: false }); };
 
   const DEFAULT_PORTS: Record<string, number> = { mysql: 3306, postgres: 5432, mssql: 1433, oracle: 1521 };
   const onClientChange = (v: string) => {
@@ -410,11 +450,11 @@ export function ProjectConfigPanel(p: {
 
   const addKd = () => { const id = newConfigId(); setKds([...kds, { id, name: `金蝶 ${kds.length + 1}`, argStyle: 'named', lcid: 2052 }]); setSelKd(id); };
   const delKd = (id: string) => { const next = kds.filter((x) => x.id !== id); setKds(next); if (selKd === id) setSelKd(next[0]?.id ?? ''); };
-  const renameKd = (id: string) => { const cur = kds.find((x) => x.id === id); const n = prompt('重命名金蝶配置', cur?.name || ''); if (n && n.trim()) setList(setKds, kds, id, { name: n.trim() }); };
+  const renameKd = async (id: string) => { const cur = kds.find((x) => x.id === id); const n = await prompt('重命名金蝶配置', cur?.name || ''); if (n && n.trim()) setList(setKds, kds, id, { name: n.trim() }); };
 
   const buildConfig = (): import('../../../core/messaging').ProjectConfig => ({
     connections: {
-      db: dbs.map((d) => ({ id: d.id, name: d.name, client: d.client, host: d.host, port: Number(d.port) || undefined, user: d.user, database: d.database })),
+      db: dbs.map((d) => ({ id: d.id, name: d.name, autoName: d.autoName !== false, client: d.client, host: d.host, port: Number(d.port) || undefined, user: d.user, database: d.database })),
       kingdee: kds.map((k) => ({ id: k.id, name: k.name, baseUrl: k.baseUrl, dbId: k.dbId, appId: k.appId, user: k.user, lcid: Number(k.lcid) || undefined, loginPath: k.loginPath, metadataPath: k.metadataPath, argStyle: k.argStyle, extraHeaders: k.extraHeaders })),
     },
   });
@@ -483,7 +523,7 @@ export function ProjectConfigPanel(p: {
                 <span key={d.id} class={`badge${d.id === db.id ? ' info' : ''}`} style="cursor:pointer" onClick={() => setSelDb(d.id)} title={d.name}>{d.name || '未命名'}</span>
               ))}
               <a class="link small" href="#" onClick={(e) => { e.preventDefault(); renameDb(db.id); }}>重命名</a>
-              <a class="link small" href="#" onClick={(e) => { e.preventDefault(); if (confirm(`删除数据库配置「${db.name}」？`)) delDb(db.id); }}>删除</a>
+              <a class="link small" href="#" onClick={async (e) => { e.preventDefault(); if (await confirm(`删除数据库配置「${db.name}」？`)) delDb(db.id); }}>删除</a>
             </div>
             <Field label="类型">
               <select value={db.client ?? ''} onInput={(e: any) => onClientChange(e.target.value)}>
@@ -517,7 +557,7 @@ export function ProjectConfigPanel(p: {
                 <span key={k.id} class={`badge${k.id === kd.id ? ' info' : ''}`} style="cursor:pointer" onClick={() => setSelKd(k.id)} title={k.name}>{k.name || '未命名'}</span>
               ))}
               <a class="link small" href="#" onClick={(e) => { e.preventDefault(); renameKd(kd.id); }}>重命名</a>
-              <a class="link small" href="#" onClick={(e) => { e.preventDefault(); if (confirm(`删除金蝶配置「${kd.name}」？`)) delKd(kd.id); }}>删除</a>
+              <a class="link small" href="#" onClick={async (e) => { e.preventDefault(); if (await confirm(`删除金蝶配置「${kd.name}」？`)) delKd(kd.id); }}>删除</a>
             </div>
             <Field label="站点地址">
               <input type="text" style="width:260px" placeholder="http://server/k3cloud" value={kd.baseUrl ?? ''} onInput={(e: any) => onKdField('baseUrl', e.target.value)} />
@@ -585,6 +625,8 @@ export function ProjectConfigPanel(p: {
           </div>
         )}
       </Section>
+      {confirmNode}
+      {promptNode}
     </div>
   );
 }
@@ -697,6 +739,59 @@ export function TableList(p: {
 
   const kinds = useMemo(() => [...new Set(p.tables.map((t) => t.origin?.kind || 'unknown'))], [p.tables]);
 
+  /** 把某一项滚动到可视区（键盘切换/外键跳转都用） */
+  const scrollToIndex = (idx: number) => {
+    const el = listRef.current;
+    if (!el || idx < 0) return;
+    const top = idx * ROW_H;
+    const bottom = top + ROW_H;
+    if (top < el.scrollTop) el.scrollTop = top;
+    else if (bottom > el.scrollTop + el.clientHeight) el.scrollTop = bottom - el.clientHeight;
+  };
+
+  // 滚动事件用 rAF 合并，避免 1 万张表时每个 scroll 都触发一次 React 重渲染
+  const rafRef = useRef(0);
+  const scrollInfoRef = useRef({ top: 0, h: viewH });
+  const onListScroll = (e: any) => {
+    const el = e.currentTarget as HTMLDivElement;
+    scrollInfoRef.current = { top: el.scrollTop, h: el.clientHeight || viewH };
+    if (rafRef.current) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = 0;
+      setScrollTop(scrollInfoRef.current.top);
+      setViewH(scrollInfoRef.current.h);
+    });
+  };
+  useEffect(() => () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); }, []);
+
+  const moveSelection = (delta: number) => {
+    if (!capped.length) return;
+    const idx = capped.findIndex((t: any) => t.name === p.selected);
+    const next = idx < 0
+      ? (delta >= 0 ? 0 : capped.length - 1)
+      : Math.max(0, Math.min(capped.length - 1, idx + delta));
+    const t = capped[next];
+    if (!t) return;
+    p.onSelect(t.name);
+    scrollToIndex(next);
+  };
+
+  const onListKeyDown = (e: any) => {
+    const page = Math.max(1, Math.floor((listRef.current?.clientHeight || viewH) / ROW_H) - 1);
+    if (e.key === 'ArrowDown') { e.preventDefault(); moveSelection(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); moveSelection(-1); }
+    else if (e.key === 'PageDown') { e.preventDefault(); moveSelection(page); }
+    else if (e.key === 'PageUp') { e.preventDefault(); moveSelection(-page); }
+    else if (e.key === 'Home') { e.preventDefault(); moveSelection(-capped.length); }
+    else if (e.key === 'End') { e.preventDefault(); moveSelection(capped.length); }
+  };
+
+  // 选中项变化（键盘/外键跳转/搜索）时，保证它在可视区
+  useEffect(() => {
+    const idx = capped.findIndex((t: any) => t.name === p.selected);
+    if (idx >= 0) scrollToIndex(idx);
+  }, [p.selected, capped]);
+
   return (
     <div class="left" style="display:flex; flex-direction:column; min-height:0; overflow:hidden">
       <div class="row" style="margin-bottom:6px; flex:none">
@@ -707,6 +802,14 @@ export function TableList(p: {
           placeholder="搜索表名/中文名/字段名…"
           value={p.keyword}
           onInput={(e: any) => p.onKeyword(e.target.value)}
+          onKeyDown={(e: any) => {
+            // 搜索框里直接按 ↑/↓ 也能切表，不必先用鼠标点左栏
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+              e.preventDefault();
+              listRef.current?.focus();
+              moveSelection(e.key === 'ArrowDown' ? 1 : -1);
+            }
+          }}
         />
       </div>
       <div class="row" style="margin-bottom:6px; flex:none; gap:6px">
@@ -728,7 +831,10 @@ export function TableList(p: {
       <div
         class="vlist"
         ref={listRef}
-        onScroll={(e: any) => { setScrollTop(e.currentTarget.scrollTop); setViewH(e.currentTarget.clientHeight || viewH); }}
+        tabIndex={0}
+        title="↑/↓ 切换表，PageUp/PageDown 翻页"
+        onKeyDown={onListKeyDown}
+        onScroll={onListScroll}
       >
         {capped.length === 0 && <div class="small muted" style="padding:8px">没有匹配的表</div>}
         <div class="vlist-inner" style={`height:${capped.length * ROW_H}px`}>
@@ -737,7 +843,7 @@ export function TableList(p: {
               key={t.name}
               class={`vrow${p.selected === t.name ? ' active' : ''}`}
               style={`top:${(start + i) * ROW_H}px`}
-              onClick={() => p.onSelect(t.name)}
+              onClick={() => { listRef.current?.focus(); p.onSelect(t.name); }}
               title={`${t.name}${t.code ? ` · ${t.code}` : ''}（${t.columns.length} 字段）`}
             >
               <span class="vname mono">{t.name}</span>

@@ -35,6 +35,71 @@ export function Btn({
   );
 }
 
+/**
+ * 页面内确认弹窗。
+ * VS Code Webview 不支持原生 confirm()/prompt()（调用会被忽略），
+ * 所以项目清空/删除、配置删除等操作必须用页面内弹窗。
+ */
+export function useConfirm() {
+  const [state, setState] = useState<{ message: string; resolve: (ok: boolean) => void } | null>(null);
+  const confirm = useCallback((message: string) => new Promise<boolean>((resolve) => setState({ message, resolve })), []);
+  const close = (ok: boolean) => {
+    const s = state;
+    setState(null);
+    s?.resolve(ok);
+  };
+  const node = state ? (
+    <div class="modal-mask" onClick={() => close(false)}>
+      <div class="modal-card" onClick={(e) => e.stopPropagation()}>
+        <div class="modal-title">请确认</div>
+        <div class="modal-body">{state.message}</div>
+        <div class="row" style="justify-content:flex-end">
+          <Btn onClick={() => close(false)}>取消</Btn>
+          <Btn primary onClick={() => close(true)}>确定</Btn>
+        </div>
+      </div>
+    </div>
+  ) : null;
+  return { confirm, confirmNode: node };
+}
+
+/** 页面内输入弹窗（替代原生 prompt） */
+export function usePrompt() {
+  const [state, setState] = useState<{ message: string; value: string; resolve: (v: string | null) => void } | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const open = !!state;
+  useEffect(() => {
+    // 只在打开时聚焦一次；输入过程中 state 变化不要重复 focus
+    if (open) setTimeout(() => inputRef.current?.focus(), 0);
+  }, [open]);
+  const prompt = useCallback((message: string, initial = '') => new Promise<string | null>((resolve) => setState({ message, value: initial, resolve })), []);
+  const close = (ok: boolean) => {
+    const s = state;
+    setState(null);
+    s?.resolve(ok ? s.value : null);
+  };
+  const node = state ? (
+    <div class="modal-mask" onClick={() => close(false)}>
+      <div class="modal-card" onClick={(e) => e.stopPropagation()}>
+        <div class="modal-title">请输入</div>
+        <div class="modal-body">{state.message}</div>
+        <input
+          ref={inputRef}
+          type="text"
+          value={state.value}
+          onInput={(e) => setState({ ...state, value: (e.target as HTMLInputElement).value })}
+          onKeyDown={(e) => { if (e.key === 'Enter') close(true); if (e.key === 'Escape') close(false); }}
+        />
+        <div class="row" style="justify-content:flex-end">
+          <Btn onClick={() => close(false)}>取消</Btn>
+          <Btn primary onClick={() => close(true)}>确定</Btn>
+        </div>
+      </div>
+    </div>
+  ) : null;
+  return { prompt, promptNode: node };
+}
+
 export function Section({ title, children }: { title: string; children: ComponentChildren }) {
   return (
     <div class="card">
@@ -48,7 +113,11 @@ export function Section({ title, children }: { title: string; children: Componen
 export function useHistory(key: string, maxSize = 20) {
   const [items, setItems] = useState<string[]>([]);
   useEffect(() => {
-    host.readState<string[]>(`history:${key}`).then((v) => Array.isArray(v) && setItems(v)).catch(() => undefined);
+    let alive = true;
+    host.readState<string[]>(`history:${key}`).then((v) => {
+      if (alive && Array.isArray(v)) setItems(v);
+    }).catch(() => undefined);
+    return () => { alive = false; };
   }, [key]);
   const push = useCallback(
     (text: string) => {
@@ -210,34 +279,60 @@ export function CodeArea(p: {
  * - 一旦用户（或 prefill）改过值就置 dirty，异步读取结果不再覆盖，
  *   保证「右键送入内容」优先于「上次残留内容」
  */
-export function usePersistentState(key: string, initial: string) {
+export function usePersistentState(key: string, initial: string, sanitize?: (v: string) => string) {
   const [value, setValue] = useState(initial);
   const [loaded, setLoaded] = useState(false);
   const dirty = useRef(false);
+  const loadedRef = useRef(false);
+  const valueRef = useRef(value);
+  valueRef.current = value;
 
   useEffect(() => {
     let alive = true;
     dirty.current = false;
+    loadedRef.current = false;
     setLoaded(false);
     host.readState<string>(`state:${key}`).then((v) => {
       if (!alive) return;
-      if (!dirty.current && typeof v === 'string') setValue(v);
+      if (!dirty.current && typeof v === 'string') {
+        valueRef.current = v;
+        setValue(v);
+      }
+      loadedRef.current = true;
       setLoaded(true);
-    }).catch(() => alive && setLoaded(true));
+    }).catch(() => {
+      if (alive) {
+        loadedRef.current = true;
+        setLoaded(true);
+      }
+    });
     return () => { alive = false; };
   }, [key]);
 
   useEffect(() => {
     if (!loaded) return;
     const t = setTimeout(() => {
-      host.persistState(`state:${key}`, value).catch(() => undefined);
+      const stored = sanitize ? sanitize(value) : value;
+      host.persistState(`state:${key}`, stored).catch(() => undefined);
     }, 400);
     return () => clearTimeout(t);
-  }, [key, value, loaded]);
+  }, [key, value, loaded, sanitize]);
+
+  // 切页签/关面板时 flush，避免最后 400ms 的输入被 clearTimeout 丢掉
+  useEffect(() => () => {
+    if (loadedRef.current) {
+      const stored = sanitize ? sanitize(valueRef.current) : valueRef.current;
+      host.persistState(`state:${key}`, stored).catch(() => undefined);
+    }
+  }, [key, sanitize]);
 
   const set = useCallback((v: string | ((prev: string) => string)) => {
     dirty.current = true;
-    setValue(v);
+    setValue((prev) => {
+      const next = typeof v === 'function' ? v(prev) : v;
+      valueRef.current = next;
+      return next;
+    });
   }, []);
 
   return [value, set] as const;

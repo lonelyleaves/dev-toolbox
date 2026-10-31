@@ -40,6 +40,24 @@ describe('① 旧单配置 → 数组无损迁移', () => {
     expect(normalizeConnections({}).connections.kingdee).toEqual([]);
     expect(normalizeConnections({ connections: { db: {} } }).connections.db).toEqual([]); // 空对象不算一条
   });
+
+  it('数据库配置按主机自动命名：旧名 127.0.0.1 会被改成当前主机', () => {
+    const cfg = normalizeConnections({
+      connections: { db: [{ id: 'd1', name: '127.0.0.1', host: '10.0.3.60', database: 'AIS2026test', client: 'mssql' }] },
+    });
+    const db = cfg.connections.db![0];
+    expect(db.name).toBe('10.0.3.60');
+    expect(db.autoName).toBe(true);
+  });
+
+  it('用户自定义名称不会被自动改名', () => {
+    const cfg = normalizeConnections({
+      connections: { db: [{ id: 'd1', name: '生产库', host: '10.0.3.60', database: 'AIS2026test' }] },
+    });
+    const db = cfg.connections.db![0];
+    expect(db.name).toBe('生产库');
+    expect(db.autoName).toBe(false);
+  });
 });
 
 describe('② 凭据按项目+配置隔离（default 命中旧 key）', () => {

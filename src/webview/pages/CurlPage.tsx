@@ -1,13 +1,13 @@
 import { h } from 'preact';
 import { useState, useEffect, useMemo } from 'preact/hooks';
-import { parseCurl, generateCode, ParsedCurl } from '../../logic/curlx';
+import { parseCurl, generateCode, ParsedCurl, redactCurlCommand } from '../../logic/curlx';
 import { Btn, CopyBtn, CodeArea, Section, useHistory, usePersistentState, clipPrefill } from '../components';
 import { host } from '../bridge';
 import { Prefill } from '../app';
 import { HttpResponseData } from '../../core/messaging';
 
 export function CurlPage({ prefill }: { prefill?: Prefill }) {
-  const [command, setCommand] = usePersistentState('curl.command', 'curl -X POST https://httpbin.org/post -H "Content-Type: application/json" -d \'{"name":"dev-toolbox"}\'');
+  const [command, setCommand] = usePersistentState('curl.command', 'curl -X POST https://httpbin.org/post -H "Content-Type: application/json" -d \'{"name":"dev-toolbox"}\'', redactCurlCommand);
   const [parsed, setParsed] = useState<ParsedCurl | null>(null);
   const [response, setResponse] = useState<HttpResponseData | null>(null);
   const [sending, setSending] = useState(false);
@@ -32,7 +32,7 @@ export function CurlPage({ prefill }: { prefill?: Prefill }) {
     setSending(true);
     setSendError('');
     setResponse(null);
-    history.push(command);
+    history.push(redactCurlCommand(command));
     try {
       const r = await host.httpRequest({
         method: parsed.method,

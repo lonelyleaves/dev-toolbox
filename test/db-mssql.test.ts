@@ -17,10 +17,10 @@ vi.mock('mssql', () => {
         recordset: sqlText.includes('FROM sys.tables t')
           ? [{ n: 'T_A', c: '表A' }, { n: 'T_B', c: undefined }]
           : sqlText.includes('FROM sys.columns c')
-            ? [{ n: 'F1', ty: 'nvarchar(50)', nu: 'YES', k: 'PRI', d: null, idn: 0, cmt: '列1' }]
+            ? [{ tn: 'T_A', n: 'F1', ty: 'nvarchar(50)', nu: 'YES', k: 'PRI', d: null, idn: 0, cmt: '列1' }]
             : sqlText.includes('FROM sys.indexes i')
-              ? [{ n: 'IX_1', u: 1, cols: 'F1' }]
-              : [{ n: 'FK_1', col: 'F1', rt: 'T_B', rc: 'F1' }],
+              ? [{ tn: 'T_A', n: 'IX_1', u: 1, cols: 'F1' }]
+              : [{ tn: 'T_A', n: 'FK_1', col: 'F1', rt: 'T_B', rc: 'F1' }],
       };
     },
   };
@@ -33,21 +33,24 @@ vi.mock('mssql', () => {
   };
 });
 
-describe('introspect mssql 参数绑定（mssql v11 三参 input）', () => {
-  it('tn 参数值必须是字符串（不再把 NVarChar 描述符当值绑定）', async () => {
+describe('introspect mssql 批量查询（避免逐表 3 次查询超时）', () => {
+  it('字段/索引/外键各一次查询，并按表名正确归表', async () => {
     ctx.captured.length = 0;
+    ctx.sqls.length = 0;
     const { introspect } = await import('../src/host/db');
     const dict = await introspect(
       { client: 'mssql', host: 'prod.example.cn', port: 1433, user: 'sa', password: 'x', database: 'ERP_DB' } as any,
       { get: async () => null } as any,
     );
-    expect(ctx.captured.map((c) => c.name)).toEqual(['tn', 'tn', 'tn', 'tn', 'tn', 'tn']);
-    for (const c of ctx.captured) {
-      expect(typeof c.value).toBe('string');
-      expect(['T_A', 'T_B']).toContain(c.value);
-    }
+    // 已改为批量查询，不再逐表 input 绑定
+    expect(ctx.captured.length).toBe(0);
+    expect(ctx.sqls.filter((s) => s.includes('FROM sys.columns c')).length).toBe(1);
+    expect(ctx.sqls.filter((s) => s.includes('FROM sys.indexes i')).length).toBe(1);
+    expect(ctx.sqls.filter((s) => s.includes('FROM sys.foreign_keys fk')).length).toBe(1);
+
     expect(dict.tables.map((t) => t.name)).toEqual(['T_A', 'T_B']);
     expect(dict.tables[0].columns).toHaveLength(1);
+    expect(dict.tables[0].columns[0].name).toBe('F1');
     expect(dict.tables[0].indexes[0].name).toBe('IX_1');
     expect(dict.tables[0].foreignKeys[0].refTable).toBe('T_B');
   });

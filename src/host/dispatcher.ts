@@ -38,6 +38,17 @@ async function readTextSmart(p: string): Promise<string> {
   return buf.toString('utf8');
 }
 
+const MAX_TEXT_FILE_BYTES = 64 * 1024 * 1024;
+const MAX_BINARY_FILE_BYTES = 50 * 1024 * 1024;
+
+async function readTextFileChecked(p: string): Promise<string> {
+  const st = await fs.promises.stat(p);
+  if (st.size > MAX_TEXT_FILE_BYTES) {
+    throw new Error(`文件过大（${(st.size / 1024 / 1024).toFixed(1)}MB，上限 ${MAX_TEXT_FILE_BYTES / 1024 / 1024}MB）`);
+  }
+  return readTextSmart(p);
+}
+
 export async function handleHostCommand(cmd: HostCommand, payload: any, panel: vscode.WebviewPanel): Promise<unknown> {
   switch (cmd) {
     case 'getSettings': {
@@ -98,12 +109,37 @@ export async function handleHostCommand(cmd: HostCommand, payload: any, panel: v
     case 'openTextFile': {
       const uris = await vscode.window.showOpenDialog({ canSelectMany: false });
       if (!uris || uris.length === 0) return null;
-      // 带上完整路径：字典缓存要记住来源，解析规则升级后可自动重解析而不必让用户重选文件
-      return {
-        name: uris[0].fsPath.split('/').pop() || uris[0].fsPath,
-        path: uris[0].fsPath,
-        content: await readTextSmart(uris[0].fsPath),
-      };
+      try {
+        return {
+          name: uris[0].fsPath.split(/[\\/]/).pop() || uris[0].fsPath,
+          path: uris[0].fsPath,
+          content: await readTextFileChecked(uris[0].fsPath),
+        };
+      } catch (e: any) {
+        void vscode.window.showErrorMessage(`读取文件失败：${e?.message || e}`);
+        return null;
+      }
+    }
+    case 'openTextFiles': {
+      const { extensions } = (payload || {}) as { extensions?: string[] };
+      const filters: Record<string, string[]> = extensions?.length
+        ? { '支持的文件': extensions, '所有文件': ['*'] }
+        : { '所有文件': ['*'] };
+      const uris = await vscode.window.showOpenDialog({ canSelectMany: true, filters, openLabel: '选择' });
+      if (!uris || uris.length === 0) return [];
+      const files: { name: string; path: string; content: string }[] = [];
+      for (const u of uris) {
+        try {
+          files.push({
+            name: u.fsPath.split(/[\\/]/).pop() || u.fsPath,
+            path: u.fsPath,
+            content: await readTextFileChecked(u.fsPath),
+          });
+        } catch (e: any) {
+          void vscode.window.showWarningMessage(`已跳过 ${u.fsPath}：${e?.message || e}`);
+        }
+      }
+      return files;
     }
     // ---------- 项目库（数据字典持久化） ----------
     case 'projectList':
@@ -332,7 +368,7 @@ export async function handleHostCommand(cmd: HostCommand, payload: any, panel: v
       // 仅用于重新解析用户此前主动选择过的文件；失败返回 ok:false 而非抛错
       const { path } = payload as { path: string };
       try {
-        return { ok: true, content: await readTextSmart(path) };
+        return { ok: true, content: await readTextFileChecked(path) };
       } catch (e: any) {
         return { ok: false, error: String(e?.message || e) };
       }
@@ -340,8 +376,13 @@ export async function handleHostCommand(cmd: HostCommand, payload: any, panel: v
     case 'openBinaryFile': {
       const uris = await vscode.window.showOpenDialog({ canSelectMany: false });
       if (!uris || uris.length === 0) return null;
+      const st = await fs.promises.stat(uris[0].fsPath);
+      if (st.size > MAX_BINARY_FILE_BYTES) {
+        void vscode.window.showErrorMessage(`文件过大（${(st.size / 1024 / 1024).toFixed(1)}MB，上限 ${MAX_BINARY_FILE_BYTES / 1024 / 1024}MB）`);
+        return null;
+      }
       const buf = await fs.promises.readFile(uris[0].fsPath);
-      return { name: uris[0].fsPath, base64: buf.toString('base64') };
+      return { name: uris[0].fsPath.split(/[\\/]/).pop() || uris[0].fsPath, base64: buf.toString('base64') };
     }
     case 'httpRequest': {
       return await doHttpRequest(payload);
@@ -352,8 +393,12 @@ export async function handleHostCommand(cmd: HostCommand, payload: any, panel: v
     }
     case 'dbTestConnection':
       return await testConnection(payload, context.secrets);
-    case 'dbIntrospect':
-      return await introspect(payload, context.secrets);
+    case 'dbIntrospect': {
+      const { info, progressId } = payload as { info: any; progressId?: string };
+      return await introspect(info, context.secrets, progressId ? (p) => {
+        panel.webview.postMessage({ kind: 'push', event: 'dbProgress', toolId: 'dictionary', payload: { id: progressId, ...p } });
+      } : undefined);
+    }
     case 'dbSavePassword': {
       const { info, password } = payload as { info: any; password: string };
       await saveDbPassword(info, password, context.secrets);

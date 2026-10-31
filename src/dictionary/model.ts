@@ -42,6 +42,8 @@ export interface ColumnDef {
   defaultValue?: string;
   comment?: string;
   autoIncrement?: boolean;
+  /** 解析器推测出的字段（如金蝶 HTML 主键未在字段表列出），不参与字段属性比对 */
+  guessed?: boolean;
   changeTag?: ChangeTag;
   origin?: Origin;          // 该字段来自哪个来源（多来源合并后用于溯源）
 }
@@ -49,6 +51,8 @@ export interface ColumnDef {
 export interface IndexDef {
   name: string;
   unique: boolean;
+  /** 导出源是否提供了唯一性信息（金蝶 HTML 只有 CLUSTERED/NONCLUSTERED，不提供 UNIQUE） */
+  uniqueKnown?: boolean;
   columns: string[];
   changeTag?: ChangeTag;
 }

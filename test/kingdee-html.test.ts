@@ -69,6 +69,25 @@ describe('金蝶 HTML 数据字典解析', () => {
     expect(t.columns.find((c) => c.name === 'FNUMBER')!.pk).toBeFalsy();
     expect(t.indexes.map((i) => i.name)).toEqual(['IDX_BD_SUPPLIER_NUMBER']);
   });
+
+  it('字段表未列出的主键：补列但不伪造注释，只记导入警告', () => {
+    const html = `<html><body>
+<h4>银行-银行信息</h4>
+<table><tr><td>表名称</td><td>实体名称</td><td>ORM实体名</td></tr><tr><td>T_BD_CUSTBANK</td><td>银行信息</td><td>CustBank</td></tr></table>
+<table>
+<tr><td>标题</td><td>标识</td><td>名称</td><td>数据类型</td><td>长度</td><td>精度</td><td>小数精度</td><td>允许空值</td><td>默认值</td></tr>
+<tr><td>银行账号</td><td>FBankCode</td><td>FBANKCODE</td><td>nvarchar</td><td>510</td><td>255</td><td>0</td><td>是</td><td></td></tr>
+</table>
+<table><tr><td>名称</td><td>类型</td><td>字段</td></tr><tr><td>PK_BD_CUSTBANK</td><td>PK</td><td>FENTRYID</td></tr></table>
+</body></html>`;
+    const d = parseKingdeeHtml(html);
+    const pk = d.tables[0].columns.find((c) => c.name === 'FENTRYID')!;
+    expect(pk.pk).toBe(true);
+    expect(pk.type).toBe('int');
+    expect(pk.guessed).toBe(true);
+    expect(pk.comment).toBeUndefined();
+    expect(d.importErrors.some((e) => e.message.includes('FENTRYID') && e.message.includes('补出'))).toBe(true);
+  });
 });
 
 describe('splitDefault / buildHtmlType', () => {

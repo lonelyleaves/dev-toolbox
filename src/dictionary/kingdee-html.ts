@@ -117,7 +117,8 @@ export function parseKingdeeHtml(text: string): DictionaryModel {
               continue;
             }
             if (type === 'CLUSTERED' || type === 'NONCLUSTERED') {
-              indexes.push({ name, unique: /UNIQUE/i.test(name), columns: cols });
+              const uniqueByName = /UNIQUE/i.test(name);
+              indexes.push({ name, unique: uniqueByName, uniqueKnown: uniqueByName, columns: cols });
             }
             // FK 行（类型=FK）暂不解析引用表（HTML 未给出）
           }
@@ -165,8 +166,9 @@ export function parseKingdeeHtml(text: string): DictionaryModel {
       const existing = new Set(columns.map((c) => c.name.toUpperCase()));
       for (const pkName of pkCols) {
         if (existing.has(pkName)) continue;
-        columns.unshift({ name: pkName, type: 'int', nullable: false, pk: true, comment: '主键（导出未列出字段定义，类型按 int 推测）' });
+        columns.unshift({ name: pkName, type: 'int', nullable: false, pk: true, guessed: true });
         existing.add(pkName);
+        dict.importErrors.push({ source: 'html', message: `${tableName}: 主键 ${pkName} 未在字段表列出，已按 int 补出` });
       }
 
       const table: TableDef = {

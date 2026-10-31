@@ -23,14 +23,22 @@ export function DiffPage({ prefill }: { prefill?: Prefill }) {
     }
   }, [prefill]);
 
+  // 大文本逐键 diff 会卡住：防抖后再计算（右侧输入同样）
+  const [debLeft, setDebLeft] = useState(left);
+  const [debRight, setDebRight] = useState(right);
+  useEffect(() => {
+    const t = setTimeout(() => { setDebLeft(left); setDebRight(right); }, 220);
+    return () => clearTimeout(t);
+  }, [left, right]);
+
   const { pairs, stats } = useMemo(() => {
-    if (!left && !right) return { pairs: [] as DiffLinePair[], stats: null as any };
+    if (!debLeft && !debRight) return { pairs: [] as DiffLinePair[], stats: null as any };
     try {
-      return buildDiffPairs(left, right, { ignoreWhitespace: ignoreWs, ignoreCase });
+      return buildDiffPairs(debLeft, debRight, { ignoreWhitespace: ignoreWs, ignoreCase });
     } catch {
       return { pairs: [] as DiffLinePair[], stats: null as any };
     }
-  }, [left, right, ignoreWs, ignoreCase]);
+  }, [debLeft, debRight, ignoreWs, ignoreCase]);
 
   const visible = useMemo(() => {
     let ps = pairs;

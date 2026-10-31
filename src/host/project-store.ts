@@ -29,7 +29,8 @@ export function projectSecretKey(projectId: string, kind: 'db' | 'kingdee', conf
 
 /** 缓存槽名：'default' 配置沿用旧 kind 名（旧缓存命中），其余拼 configId */
 export function cacheSlot(kind: string, configId?: string): string {
-  return !configId || configId === DEFAULT_CONFIG_ID ? kind : `${kind}__${configId}`;
+  const safe = (v: string) => String(v || '').replace(/[^A-Za-z0-9_-]/g, '_');
+  return !configId || configId === DEFAULT_CONFIG_ID ? safe(kind) : `${safe(kind)}__${safe(configId)}`;
 }
 
 export interface ProjectIndex {
@@ -49,9 +50,28 @@ export interface ProjectBundle {
 }
 
 const INDEX_FILE = 'index.json';
+const INDEX_BACKUP = 'index.bak';
 const DICT_FILE = 'dict.json';
 const CONFIG_FILE = 'config.json';
 const CACHE_DIR = 'cache';
+
+/** 原子写：先写同目录临时文件，再 rename 覆盖，避免半截 JSON */
+function writeFileAtomic(file: string, data: string) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.tmp-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    fs.writeFileSync(tmp, data, 'utf8');
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    try { fs.rmSync(tmp, { force: true }); } catch { /* 忽略清理失败 */ }
+    throw e;
+  }
+}
+
+function isValidIndex(x: any): x is ProjectIndex {
+  return !!x && x.version === 1 && Array.isArray(x.projects)
+    && (x.currentId === null || typeof x.currentId === 'string');
+}
 
 /** 缓存元信息：拉取时间、配置指纹、金蝶用到的表单标识 */
 export interface CacheMeta {
@@ -82,7 +102,7 @@ function sanitizeConfig(cfg: ProjectConfig | undefined): ProjectConfig {
   const norm = normalizeConnections(cfg);
   const out = emptyProjectConfig();
   out.connections.db = (norm.connections.db || []).map((d) => ({
-    id: d.id, name: d.name,
+    id: d.id, name: d.name, autoName: d.autoName,
     client: d.client, host: d.host,
     port: Number.isFinite(Number(d.port)) ? Number(d.port) : undefined,
     user: d.user, database: d.database,
@@ -104,21 +124,45 @@ export class ProjectStore {
   }
 
   private get indexPath(): string { return path.join(this.root, INDEX_FILE); }
-  private dirOf(id: string): string { return path.join(this.root, id); }
+  private get indexBackupPath(): string { return path.join(this.root, INDEX_BACKUP); }
+  private dirOf(id: string): string {
+    // 项目 id 会拼进文件路径：拒绝分隔符/..，避免 Webview 传入路径穿越
+    if (!/^[A-Za-z0-9_-]+$/.test(id || '')) throw new Error(`非法项目 id: ${id}`);
+    return path.join(this.root, id);
+  }
 
   private readIndex(): ProjectIndex {
-    try {
-      const raw = fs.readFileSync(this.indexPath, 'utf8');
-      const idx = JSON.parse(raw) as ProjectIndex;
-      return { version: 1, currentId: idx.currentId ?? null, projects: idx.projects ?? [] };
-    } catch {
-      return { version: 1, currentId: null, projects: [] };
+    const read = (file: string): ProjectIndex | null => {
+      try {
+        const raw = fs.readFileSync(file, 'utf8');
+        const idx = JSON.parse(raw);
+        if (!isValidIndex(idx)) return null;
+        return { version: 1, currentId: idx.currentId ?? null, projects: idx.projects ?? [] };
+      } catch {
+        return null;
+      }
+    };
+    const main = read(this.indexPath);
+    if (main) return main;
+    const backup = read(this.indexBackupPath);
+    if (backup) return backup;
+    // 文件不存在 = 首次使用；文件存在但损坏 = 绝不能静默返回空索引，否则下一次写入会清空项目列表
+    if (fs.existsSync(this.indexPath)) {
+      throw new Error('项目索引损坏（index.json / index.bak 均无法读取）。已保留原文件，请先备份/修复 index.json');
     }
+    return { version: 1, currentId: null, projects: [] };
   }
 
   private writeIndex(idx: ProjectIndex) {
     fs.mkdirSync(this.root, { recursive: true });
-    fs.writeFileSync(this.indexPath, JSON.stringify(idx, null, 2), 'utf8');
+    // 只在现有 index 可解析时更新备份，避免把损坏内容复制进备份
+    if (fs.existsSync(this.indexPath)) {
+      try {
+        const cur = JSON.parse(fs.readFileSync(this.indexPath, 'utf8'));
+        if (isValidIndex(cur)) fs.copyFileSync(this.indexPath, this.indexBackupPath);
+      } catch { /* 坏 index 不覆盖已有备份 */ }
+    }
+    writeFileAtomic(this.indexPath, JSON.stringify(idx, null, 2));
   }
 
 
@@ -154,7 +198,7 @@ export class ProjectStore {
     const now = new Date().toISOString();
     const meta: ProjectMeta = { id, name, createdAt: now, updatedAt: now, sourceCount: 0, tableCount: 0 };
     fs.mkdirSync(this.dirOf(id), { recursive: true });
-    fs.writeFileSync(path.join(this.dirOf(id), DICT_FILE), JSON.stringify({ version: 1, name, dialect: 'generic', tables: [], importErrors: [] }, null, 2), 'utf8');
+    writeFileAtomic(path.join(this.dirOf(id), DICT_FILE), JSON.stringify({ version: 1, name, dialect: 'generic', tables: [], importErrors: [] }, null, 2));
     idx.projects.push(meta);
     idx.currentId = id;
     this.writeIndex(idx);
@@ -182,10 +226,9 @@ export class ProjectStore {
     const idx = this.readIndex();
     const p = idx.projects.find((x) => x.id === id);
     if (!p) throw new Error(`项目不存在: ${id}`);
-    fs.writeFileSync(
+    writeFileAtomic(
       path.join(this.dirOf(id), DICT_FILE),
       JSON.stringify({ version: 1, name: p.name, dialect: 'generic', tables: [], importErrors: [], sources: [] }, null, 2),
-      'utf8',
     );
     p.sourceCount = 0;
     p.tableCount = 0;
@@ -202,8 +245,9 @@ export class ProjectStore {
   }
 
   load(id: string): DictionaryModel | null {
+    const projectDir = this.dirOf(id);
     try {
-      const raw = fs.readFileSync(path.join(this.dirOf(id), DICT_FILE), 'utf8');
+      const raw = fs.readFileSync(path.join(projectDir, DICT_FILE), 'utf8');
       return JSON.parse(raw) as DictionaryModel;
     } catch {
       return null;
@@ -211,16 +255,16 @@ export class ProjectStore {
   }
 
   save(id: string, dict: DictionaryModel) {
+    const projectDir = this.dirOf(id);
     const idx = this.readIndex();
     const p = idx.projects.find((x) => x.id === id);
-    fs.mkdirSync(this.dirOf(id), { recursive: true });
-    fs.writeFileSync(path.join(this.dirOf(id), DICT_FILE), JSON.stringify(dict), 'utf8');
-    if (p) {
-      p.tableCount = dict.tables.length;
-      p.sourceCount = dict.sources?.length ?? 0;
-      p.updatedAt = new Date().toISOString();
-      this.writeIndex(idx);
-    }
+    if (!p) throw new Error(`项目不存在: ${id}`);
+    fs.mkdirSync(projectDir, { recursive: true });
+    writeFileAtomic(path.join(projectDir, DICT_FILE), JSON.stringify(dict));
+    p.tableCount = dict.tables.length;
+    p.sourceCount = dict.sources?.length ?? 0;
+    p.updatedAt = new Date().toISOString();
+    this.writeIndex(idx);
   }
 
   /** 读项目连接配置（不存在返回空配置） */
@@ -236,7 +280,7 @@ export class ProjectStore {
   /** 写项目连接配置（经白名单过滤，凭据不会落地） */
   saveConfig(id: string, cfg: ProjectConfig) {
     fs.mkdirSync(this.dirOf(id), { recursive: true });
-    fs.writeFileSync(path.join(this.dirOf(id), CONFIG_FILE), JSON.stringify(sanitizeConfig(cfg), null, 2), 'utf8');
+    writeFileAtomic(path.join(this.dirOf(id), CONFIG_FILE), JSON.stringify(sanitizeConfig(cfg), null, 2));
   }
 
 
@@ -254,8 +298,8 @@ export class ProjectStore {
     const dir = this.cacheDir(id);
     const slot = cacheSlot(kind, configId ?? meta?.configId);
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, `${slot}.json`), JSON.stringify(dict), 'utf8');
-    fs.writeFileSync(path.join(dir, `${slot}.meta.json`), JSON.stringify(meta), 'utf8');
+    writeFileAtomic(path.join(dir, `${slot}.json`), JSON.stringify(dict));
+    writeFileAtomic(path.join(dir, `${slot}.meta.json`), JSON.stringify(meta));
   }
 
   /** 读取上次拉取结果；meta 里带 importedAt / configHash / formIds */
@@ -294,7 +338,7 @@ export class ProjectStore {
   importBundle(bundle: ProjectBundle): ProjectMeta {
     if (bundle?.format !== 'dev-toolbox-project') throw new Error('不是有效的项目包（.dtproj.json）');
     const meta = this.create(bundle.project?.name || '导入的项目');
-    fs.writeFileSync(path.join(this.dirOf(meta.id), DICT_FILE), JSON.stringify(bundle.dict ?? { version: 1, name: meta.name, dialect: 'generic', tables: [], importErrors: [] }), 'utf8');
+    writeFileAtomic(path.join(this.dirOf(meta.id), DICT_FILE), JSON.stringify(bundle.dict ?? { version: 1, name: meta.name, dialect: 'generic', tables: [], importErrors: [] }));
     const idx = this.readIndex();
     this.saveConfig(meta.id, bundle.config ?? emptyProjectConfig());
     const p = idx.projects.find((x) => x.id === meta.id)!;
