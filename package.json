@@ -1,5 +1,5 @@
 {
-  "name": "dev-toolbox",
+  "name": "dev-toolbox-vscode",
   "displayName": "DevToolbox 开发者工具箱",
   "description": "开发者工具箱：JSON 格式化/转换、时间戳、Cron、正则、文本对比、cURL、SQL 格式化、数据字典(PDM/数据库/金蝶)、Base64/编码转换、哈希/UUID、颜色、二维码",
   "version": "0.6.9",
