@@ -143,6 +143,11 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
     try {
       await host.projectSave(id, d);
       await host.persistState(backupKey(id), null).catch(() => undefined);
+      // 同步项目列表里的表/来源计数：导入、删表后 ProjectBar 不能一直显示 0
+      try {
+        const list = await host.projectList();
+        setProjects(list.projects);
+      } catch { /* 列表刷新失败不影响字典保存 */ }
       return true;
     } catch (e: any) {
       await host.persistState(backupKey(id), { dict: d, savedAt: new Date().toISOString() }).catch(() => undefined);

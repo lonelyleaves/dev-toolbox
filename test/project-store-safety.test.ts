@@ -50,6 +50,18 @@ describe('项目库持久化安全', () => {
     expect(store.load(p.id)?.name).toBe('A');
   });
 
+  it('保存字典后项目列表同步表/来源计数', () => {
+    const p = store.create('A');
+    const d = emptyDictionary('A');
+    d.tables = [{ name: 't1', columns: [], indexes: [], foreignKeys: [] }];
+    d.sources = [{ id: 's1', kind: 'pdm', name: 'a.pdm', importedAt: '', tableCount: 1, enabled: true, priority: 10 }];
+    store.save(p.id, d);
+
+    const meta = store.list().projects.find((x) => x.id === p.id)!;
+    expect(meta.tableCount).toBe(1);
+    expect(meta.sourceCount).toBe(1);
+  });
+
   it('保存不存在的项目直接报错，不在磁盘留下孤儿目录', () => {
     expect(() => store.save('p_missing', emptyDictionary('x'))).toThrow(/项目不存在/);
     expect(fs.existsSync(path.join(root, 'p_missing'))).toBe(false);
