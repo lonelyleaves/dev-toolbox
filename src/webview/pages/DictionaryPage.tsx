@@ -13,6 +13,7 @@ import { emptyProjectConfig, findDbConfig, findKingdeeConfig, newConfigId, type 
 import { diffDictionaries, generateFixSql, mergeBaseIntoTarget, diffReportMarkdown, DiffItem } from '../../dictionary/diffengine';
 import { lintDictionary, applyFixes, suggestComments, acceptSuggestions, Violation, NamingRules } from '../../dictionary/naming';
 import { exportMarkdown, exportHtml, exportMermaid, exportDdl, exportWordHtml, buildExcelSheets, dictStats, dictSearch, referrersOf } from '../../dictionary/exporters';
+import { FieldFilters, activeFilterCount, distinctTypes, filterColumnIndexes } from '../../dictionary/field-filter';
 import { Btn, CopyBtn, Section, useConfirm } from '../components';
 import { host, bridge } from '../bridge';
 import { DbConnInfo, ProjectMeta } from '../../core/messaging';
@@ -1080,19 +1081,80 @@ export function DbImportForm({ projectId, preset, onImported, onConfigSaved }: {
 }
 
 // ---------- 表详情 ----------
+function HeaderFilter(p: {
+  label: string;
+  value: string;
+  options: { value: string; label: string }[];
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocMouseDown);
+    return () => document.removeEventListener('mousedown', onDocMouseDown);
+  }, [open]);
+  const selected = p.options.find((x) => x.value === p.value);
+  return (
+    <span ref={ref} class="th-filter-wrap">
+      <button
+        type="button"
+        class={`th-filter${p.value ? ' active' : ''}`}
+        title={p.value ? `${p.label}: ${selected?.label || p.value}` : `筛选${p.label}`}
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        onKeyDown={(e: any) => { if (e.key === 'Escape') setOpen(false); }}
+      >
+        {p.label}{p.value ? ' ●' : ' ▾'}
+      </button>
+      {open && (
+        <div class="field-filter-pop" role="menu">
+          {p.options.map((o) => (
+            <button
+              key={o.value || '__all__'}
+              type="button"
+              role="menuitem"
+              class={`field-filter-option${p.value === o.value ? ' selected' : ''}`}
+              onClick={() => { p.onChange(o.value); setOpen(false); }}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </span>
+  );
+}
+
 function TableDetail({ dict, table, onJump, focusColumn }: { dict: DictionaryModel; table: TableDef; onJump?: (tableName: string) => void; focusColumn?: string }) {
   const referrers = referrersOf(dict, table.name);
   const subName = shownName(table.name, table.code);
   const sqlTemplate = `SELECT ${table.columns.map((c) => c.name).join(', ')}\nFROM ${table.name}\nLIMIT 100;`;
   const [fieldKw, setFieldKw] = useState(focusColumn || '');
-  useEffect(() => { setFieldKw(focusColumn || ''); }, [table.name, focusColumn]);
-  const fieldNeedle = fieldKw.trim().toLowerCase();
-  const fieldRows = table.columns
-    .map((c, i) => ({ c, i }))
-    .filter(({ c }) => !fieldNeedle
-      || c.name.toLowerCase().includes(fieldNeedle)
-      || (c.code || '').toLowerCase().includes(fieldNeedle)
-      || (c.comment || '').toLowerCase().includes(fieldNeedle));
+  const [filters, setFilters] = useState<FieldFilters>({});
+  useEffect(() => { setFieldKw(focusColumn || ''); setFilters({}); }, [table.name, focusColumn]);
+  const typeOptions = useMemo(
+    () => [{ value: '', label: '全部' }, ...distinctTypes(table.columns).map((t) => ({ value: t, label: t }))],
+    [table.columns],
+  );
+  const yesNoOptions = useMemo(() => [
+    { value: '', label: '全部' },
+    { value: 'yes', label: '是' },
+    { value: 'no', label: '否' },
+  ], []);
+  const keyOptions = useMemo(() => [
+    { value: '', label: '全部' },
+    { value: 'pk', label: '主键' },
+    { value: 'non', label: '非主键' },
+  ], []);
+  const visibleIndexes = useMemo(() => filterColumnIndexes(table.columns, fieldKw, filters), [table.columns, fieldKw, filters]);
+  const filterCount = activeFilterCount(filters);
+  const setFilter = (key: keyof FieldFilters, value: string) => {
+    setFilters((prev) => ({ ...prev, [key]: value || undefined }));
+  };
   return (
     <div>
       <Section title={`${table.name}${subName ? ` (${subName})` : ''}${table.comment && table.comment !== subName ? ' — ' + table.comment : ''}`}>
@@ -1111,27 +1173,33 @@ function TableDetail({ dict, table, onJump, focusColumn }: { dict: DictionaryMod
             value={fieldKw}
             onInput={(e: any) => setFieldKw(e.target.value)}
           />
-          {fieldKw && <Btn onClick={() => setFieldKw('')}>清空</Btn>}
-          <span class="small muted" style="flex:none">{fieldRows.length} / {table.columns.length} 字段</span>
+          {fieldKw && <Btn onClick={() => setFieldKw('')}>清空搜索</Btn>}
+          {filterCount > 0 && <Btn onClick={() => setFilters({})}>清空筛选</Btn>}
+          <span class="small muted" style="flex:none">
+            {visibleIndexes.length} / {table.columns.length} 字段{filterCount > 0 ? ` · ${filterCount} 个筛选` : ''}
+          </span>
         </div>
         <table class="tbl">
-          <thead><tr><th>#</th><th>物理名 (Code)</th><th>显示名 (Name)</th><th>类型</th><th>长度</th><th class="tight" title="必填（NOT NULL）">必填</th><th>键</th><th>默认值</th><th>注释</th></tr></thead>
+          <thead><tr><th>#</th><th>物理名 (Code)</th><th>显示名 (Name)</th><th><HeaderFilter label="类型" value={filters.type || ''} options={typeOptions} onChange={(v) => setFilter('type', v)} /></th><th>长度</th><th class="tight"><HeaderFilter label="必填" value={filters.required || ''} options={yesNoOptions} onChange={(v) => setFilter('required', v)} /></th><th><HeaderFilter label="键" value={filters.key || ''} options={keyOptions} onChange={(v) => setFilter('key', v)} /></th><th><HeaderFilter label="默认值" value={filters.hasDefault || ''} options={yesNoOptions} onChange={(v) => setFilter('hasDefault', v)} /></th><th><HeaderFilter label="注释" value={filters.hasComment || ''} options={yesNoOptions} onChange={(v) => setFilter('hasComment', v)} /></th></tr></thead>
           <tbody>
-            {fieldRows.map(({ c, i }) => (
-              <tr key={`${c.name}-${i}`}>
-                <td class="muted">{i + 1}</td>
-                <td class="mono"><b>{c.name}</b></td>
-                <td>{c.code && c.code !== c.name ? c.code : <span class="muted">—</span>}</td>
-                <td class="mono">{c.type}</td>
-                <td class="mono">{c.length ?? ''}</td>
-                <td class="tight">{c.nullable === false ? <span title="NOT NULL">✓</span> : ''}</td>
-                <td>{c.pk ? <span class="badge info">PK</span> : ''}</td>
-                <td class="mono small">{c.defaultValue ?? ''}</td>
-                <td>{c.comment ?? ''}</td>
-              </tr>
-            ))}
-            {fieldRows.length === 0 && (
-              <tr><td colSpan={9} class="muted small">没有匹配的字段</td></tr>
+            {visibleIndexes.map((i) => {
+              const c = table.columns[i];
+              return (
+                <tr key={`${c.name}-${i}`}>
+                  <td class="muted">{i + 1}</td>
+                  <td class="mono"><b>{c.name}</b></td>
+                  <td>{c.code && c.code !== c.name ? c.code : <span class="muted">—</span>}</td>
+                  <td class="mono">{c.type}</td>
+                  <td class="mono">{c.length ?? ''}</td>
+                  <td class="tight">{c.nullable === false ? <span title="NOT NULL">✓</span> : ''}</td>
+                  <td>{c.pk ? <span class="badge info">PK</span> : ''}</td>
+                  <td class="mono small">{c.defaultValue ?? ''}</td>
+                  <td>{c.comment ?? ''}</td>
+                </tr>
+              );
+            })}
+            {visibleIndexes.length === 0 && (
+              <tr><td colSpan={9} class="muted small">没有匹配的字段，请调整搜索或表头筛选</td></tr>
             )}
           </tbody>
         </table>
