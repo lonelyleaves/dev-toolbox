@@ -5,7 +5,7 @@ import { ProjectMeta, ProjectConfig } from '../../../core/messaging';
 import { host } from '../../bridge';
 import { parseKingdeeMetadata } from '../../../dictionary/kingdee';
 import { DictionaryModel, DictSource, SourceKind } from '../../../dictionary/model';
-import { tablesMatching } from '../../../dictionary/search-index';
+import { tablesMatching, dictSearchFast } from '../../../dictionary/search-index';
 import { MergeConflict } from '../../../dictionary/merge';
 
 const KIND_LABEL: Record<SourceKind, string> = {
@@ -673,6 +673,8 @@ export function TableList(p: {
   sources?: any[];
   selected?: string;
   onSelect: (name: string) => void;
+  /** 全局搜索点中某个字段：选中表并把字段过滤到该字段 */
+  onSelectHit?: (table: string, column?: string) => void;
   /** 输入框即时值（受控），每次都立即回显，避免防抖期间被旧值覆盖 */
   keyword: string;
   /** 防抖后的搜索值：真正参与过滤；缺省用 keyword */
@@ -704,6 +706,11 @@ export function TableList(p: {
 
   // 关键字优先：命中列的表排在前面，仍然是"表"级别的结果（不展开字段）
   const hitNames = useMemo(() => (kw ? tablesMatching(p.dict, kw) : []), [kw, p.dict]);
+  // 全局字段命中：显示在搜索框下方，点击直接跳到对应表并过滤该字段
+  const fieldHits = useMemo(
+    () => (kw ? dictSearchFast(p.dict, kw, 80).filter((h) => !!h.column) : []),
+    [kw, p.dict],
+  );
 
   const list = useMemo(
     () => (kw
@@ -799,7 +806,7 @@ export function TableList(p: {
           type="text"
           class="mono"
           style="flex:1; min-width:0"
-          placeholder="搜索表名/中文名/字段名…"
+          placeholder="搜索表/字段/显示名/注释…"
           value={p.keyword}
           onInput={(e: any) => p.onKeyword(e.target.value)}
           onKeyDown={(e: any) => {
@@ -812,6 +819,27 @@ export function TableList(p: {
           }}
         />
       </div>
+      {kw && fieldHits.length > 0 && (
+        <div class="search-hits">
+          <div class="small muted" style="padding:2px 2px 4px">字段命中 {fieldHits.length}{fieldHits.length > 8 ? '，仅显示前 8 条' : ''}</div>
+          {fieldHits.slice(0, 8).map((hit, i) => (
+            <button
+              key={`${hit.table}-${hit.column}-${i}`}
+              type="button"
+              class="search-hit"
+              onClick={() => {
+                if (p.onSelectHit) p.onSelectHit(hit.table, hit.column);
+                else p.onSelect(hit.table);
+              }}
+              title={`跳转到 ${hit.table}.${hit.column}`}
+            >
+              <span class="mono">{hit.table}</span>
+              <span class="muted">.{hit.column}</span>
+              <span class="search-hit-text">{hit.field}: {hit.text}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <div class="row" style="margin-bottom:6px; flex:none; gap:6px">
         <select value={filter} disabled={!!kw} style="flex:1; min-width:0" onInput={(e: any) => setFilter(e.target.value as TableFilter)} title="按条件筛选表（有搜索关键字时以搜索结果为准）">
           <option value="all">全部表</option>

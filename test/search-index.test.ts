@@ -44,6 +44,16 @@ describe('字典搜索索引', () => {
     expect(dictSearchFast(d, '单据编号').some((h) => h.column === 'FBILLNO')).toBe(true);
   });
 
+  it('命中表显示名与字段显示名', () => {
+    const d2 = JSON.parse(JSON.stringify(d));
+    d2.tables[0].code = '销售订单别名';
+    d2.tables[0].columns[0].code = '单据编号别名';
+
+    expect(dictSearchFast(d2, '销售订单别名').some((h) => h.field === '表显示名')).toBe(true);
+    expect(dictSearchFast(d2, '单据编号别名').some((h) => h.field === '字段显示名' && h.column === 'FBILLNO')).toBe(true);
+    expect(tablesMatching(d2, '单据编号别名')).toContain('T_SAL_ORDER');
+  });
+
   it('结果与原来的全量扫描完全一致（防止优化改坏语义）', () => {
     for (const kw of ['T_SAL', '物料', '单据编号', 'FID', '不存在的表']) {
       const a = dictSearch(d, kw).map((x) => `${x.table}|${x.column || ''}|${x.field}|${x.text}`);

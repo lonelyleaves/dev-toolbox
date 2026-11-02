@@ -101,6 +101,8 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
   const [dict, setDict] = useState<DictionaryModel | null>(null);
   const [tab, setTab] = useState<Tab>('browse');
   const [selected, setSelected] = useState('');
+  /** 从全局搜索点进某张表时，右侧字段表自动聚焦/过滤到该字段 */
+  const [focusField, setFocusField] = useState('');
   const [kwInput, setKwInput] = useState('');
   const [keyword, setKeyword] = useState('');
   const [naming, setNaming] = useState<NamingRules>({ requireComment: true, requirePrimaryKey: true, forbiddenTypes: ['TEXT', 'BLOB'] });
@@ -180,6 +182,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
     // 先清空旧字典：避免 currentId 已切换、dict 还是旧项目时被自动保存写进新项目
     setDict(null);
     setSelected('');
+    setFocusField('');
     setBaseline(null);
     setPending(null);
     setConfigHash({});
@@ -375,6 +378,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
     const m = migrateDict(r.dict);
     setDict(m);
     if (!hadBase) setSelected(m.tables[0]?.name || '');
+    setFocusField('');
     setTab('browse');
     saveOrWarn(id, m);
     const scope = valid.length > 1 ? `（${valid.length} 个文件）` : '';
@@ -407,6 +411,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
     const finalDict = migrateDict(applyResolutions(pending.merged, pending.conflicts, pending.resolutions));
     setDict(finalDict);
     setPending(null);
+    setFocusField('');
     setTab('browse');
     saveOrWarn(currentId, finalDict);
     // 同步流程：只有确认合并成功才写缓存，取消则不写（否则缓存与字典会不一致）
@@ -739,6 +744,7 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
       return;
     }
     setSelected(target.name);
+    setFocusField('');
     setKwInput('');
     setTab('browse');
   };
@@ -814,13 +820,14 @@ export function DictionaryPage({ setFill }: { prefill?: any; setFill?: (v: boole
             tables={dict.tables}
             sources={dict.sources || []}
             selected={selected}
-            onSelect={(name) => setSelected(name)}
+            onSelect={(name) => { setSelected(name); setFocusField(''); }}
+            onSelectHit={(name, column) => { setSelected(name); setFocusField(column || ''); }}
             keyword={kwInput}
             activeKeyword={keyword}
             onKeyword={(v) => setKwInput(v)}
           />
           <div class="right">
-            {table && <TableDetail dict={dict} table={table} onJump={jumpTo} />}
+            {table && <TableDetail dict={dict} table={table} onJump={jumpTo} focusColumn={focusField} />}
           </div>
         </div>
         )
@@ -1073,10 +1080,19 @@ export function DbImportForm({ projectId, preset, onImported, onConfigSaved }: {
 }
 
 // ---------- 表详情 ----------
-function TableDetail({ dict, table, onJump }: { dict: DictionaryModel; table: TableDef; onJump?: (tableName: string) => void }) {
+function TableDetail({ dict, table, onJump, focusColumn }: { dict: DictionaryModel; table: TableDef; onJump?: (tableName: string) => void; focusColumn?: string }) {
   const referrers = referrersOf(dict, table.name);
   const subName = shownName(table.name, table.code);
   const sqlTemplate = `SELECT ${table.columns.map((c) => c.name).join(', ')}\nFROM ${table.name}\nLIMIT 100;`;
+  const [fieldKw, setFieldKw] = useState(focusColumn || '');
+  useEffect(() => { setFieldKw(focusColumn || ''); }, [table.name, focusColumn]);
+  const fieldNeedle = fieldKw.trim().toLowerCase();
+  const fieldRows = table.columns
+    .map((c, i) => ({ c, i }))
+    .filter(({ c }) => !fieldNeedle
+      || c.name.toLowerCase().includes(fieldNeedle)
+      || (c.code || '').toLowerCase().includes(fieldNeedle)
+      || (c.comment || '').toLowerCase().includes(fieldNeedle));
   return (
     <div>
       <Section title={`${table.name}${subName ? ` (${subName})` : ''}${table.comment && table.comment !== subName ? ' — ' + table.comment : ''}`}>
@@ -1086,11 +1102,23 @@ function TableDetail({ dict, table, onJump }: { dict: DictionaryModel; table: Ta
             {table.modifier && <span style="margin-left:12px">修改者: {table.modifier}</span>}
           </div>
         )}
+        <div class="row" style="margin-bottom:6px">
+          <input
+            type="text"
+            class="mono"
+            style="flex:1; min-width:0"
+            placeholder="搜索当前表字段：物理名 / 显示名 / 注释…"
+            value={fieldKw}
+            onInput={(e: any) => setFieldKw(e.target.value)}
+          />
+          {fieldKw && <Btn onClick={() => setFieldKw('')}>清空</Btn>}
+          <span class="small muted" style="flex:none">{fieldRows.length} / {table.columns.length} 字段</span>
+        </div>
         <table class="tbl">
           <thead><tr><th>#</th><th>物理名 (Code)</th><th>显示名 (Name)</th><th>类型</th><th>长度</th><th class="tight" title="必填（NOT NULL）">必填</th><th>键</th><th>默认值</th><th>注释</th></tr></thead>
           <tbody>
-            {table.columns.map((c, i) => (
-              <tr>
+            {fieldRows.map(({ c, i }) => (
+              <tr key={`${c.name}-${i}`}>
                 <td class="muted">{i + 1}</td>
                 <td class="mono"><b>{c.name}</b></td>
                 <td>{c.code && c.code !== c.name ? c.code : <span class="muted">—</span>}</td>
@@ -1102,6 +1130,9 @@ function TableDetail({ dict, table, onJump }: { dict: DictionaryModel; table: Ta
                 <td>{c.comment ?? ''}</td>
               </tr>
             ))}
+            {fieldRows.length === 0 && (
+              <tr><td colSpan={9} class="muted small">没有匹配的字段</td></tr>
+            )}
           </tbody>
         </table>
       </Section>

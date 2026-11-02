@@ -24,12 +24,18 @@ export interface SearchHit {
 interface ColEntry {
   name: string;
   nameLower: string;
+  /** 显示名（如 PDM 的中文名），与注释分开存储 */
+  code: string;
+  codeLower: string;
   comment: string;
 }
 
 interface Entry {
   name: string;
   nameLower: string;
+  /** 表显示名 */
+  code: string;
+  codeLower: string;
   comment: string;
   cols: ColEntry[];
   /** 扁平化后的可搜索文本（已小写），用于整表快筛 */
@@ -45,15 +51,20 @@ function build(dict: DictionaryModel): Entry[] {
     const cols: ColEntry[] = (t.columns || []).map((c) => ({
       name: c.name || '',
       nameLower: (c.name || '').toLowerCase(),
+      code: c.code || '',
+      codeLower: (c.code || '').toLowerCase(),
       comment: c.comment || '',
     }));
     const name = t.name || '';
     const comment = t.comment || '';
-    const parts: string[] = [name, t.code || '', comment];
-    for (const c of cols) parts.push(c.name, c.comment);
+    const code = t.code || '';
+    const parts: string[] = [name, code, comment];
+    for (const c of cols) parts.push(c.name, c.code, c.comment);
     out.push({
       name,
       nameLower: name.toLowerCase(),
+      code,
+      codeLower: code.toLowerCase(),
       comment,
       cols,
       hay: parts.join(' ').toLowerCase(),
@@ -85,6 +96,7 @@ export function dictSearchFast(
     if (hits.length >= maxHits) break; // 先查上限，避免单张表把结果撑爆
     if (!e.hay.includes(kw)) continue; // 快筛：整表都不含关键字 → 跳过
     if (e.nameLower.includes(kw)) hits.push({ table: e.name, field: '表名', text: e.name });
+    if (e.codeLower.includes(kw)) hits.push({ table: e.name, field: '表显示名', text: e.code });
     if (e.comment.toLowerCase().includes(kw)) {
       hits.push({ table: e.name, field: '表注释', text: e.comment });
     }
@@ -92,6 +104,8 @@ export function dictSearchFast(
       if (hits.length >= maxHits) break;
       if (c.nameLower.includes(kw)) {
         hits.push({ table: e.name, column: c.name, field: '字段名', text: c.name });
+      } else if (c.codeLower.includes(kw)) {
+        hits.push({ table: e.name, column: c.name, field: '字段显示名', text: c.code });
       } else if (c.comment.toLowerCase().includes(kw)) {
         hits.push({ table: e.name, column: c.name, field: '注释', text: c.comment });
       }
