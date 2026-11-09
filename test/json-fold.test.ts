@@ -22,10 +22,20 @@ describe('JSON 折叠范围', () => {
     const rows = visibleFoldRows(model, new Set([1]));
     expect(rows.map((r) => r.line)).toEqual([0, 1, 4]);
     expect(rows.find((r) => r.line === 1)?.hidden).toBe(2);
+    expect(rows.find((r) => r.line === 1)?.childCount).toBe(1);
   });
 
   it('同一行连续开括号时保留外层范围', () => {
     const model = buildJsonFoldModel('[{\n  "a": 1\n}]');
     expect(model.rangesByStart.get(0)?.end).toBe(2);
+  });
+
+  it('折叠摘要显示直接子项数量', () => {
+    const text = JSON.stringify({ a: { b: 1, c: 2 }, d: [1, 2, 3] }, null, 2);
+    const model = buildJsonFoldModel(text);
+    const aRange = model.rangesByStart.get(1);
+    const dRange = model.rangesByStart.get(5);
+    expect(aRange?.childCount).toBe(2);
+    expect(dRange?.childCount).toBe(3);
   });
 });

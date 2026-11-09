@@ -117,7 +117,7 @@ export function JsonFoldArea(p: {
                   {row.foldable ? (row.collapsed ? '▸' : '▾') : ''}
                 </button>
                 <span class="json-fold-text">{row.text}</span>
-                {row.collapsed && <span class="json-fold-summary">… {row.hidden} 行</span>}
+                {row.collapsed && <span class="json-fold-summary">… {row.childCount} 行</span>}
               </div>
             ))}
           </div>

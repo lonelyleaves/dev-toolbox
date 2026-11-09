@@ -5,6 +5,8 @@ export interface JsonFoldRange {
   end: number;
   /** 层级：根对象为 0，其直接子对象/数组为 1 */
   depth: number;
+  /** 直接子项数量（对象 key 数或数组元素数） */
+  childCount: number;
 }
 
 export interface JsonFoldModel {
@@ -19,6 +21,7 @@ export interface JsonFoldRow {
   foldable: boolean;
   collapsed: boolean;
   hidden: number;
+  childCount: number;
 }
 
 /**
@@ -60,12 +63,30 @@ export function buildJsonFoldModel(text: string): JsonFoldModel {
       if (ch === '}' || ch === ']') {
         const open = stack.pop();
         if (!open || open.line === i) continue;
-        const range: JsonFoldRange = { start: open.line, end: i, depth: open.depth };
+        const range: JsonFoldRange = { start: open.line, end: i, depth: open.depth, childCount: 0 };
         allRanges.push(range);
         const old = rangesByStart.get(range.start);
         // 同一行可能连续开多个括号；保留外层范围，折叠时一次隐藏完整块
         if (!old || range.end > old.end) rangesByStart.set(range.start, range);
       }
+    }
+  }
+
+  // 计算每个折叠区域的直接子项数量：按缩进层级统计
+  for (const range of allRanges) {
+    const startLine = lines[range.start] || '';
+    const startIndent = startLine.search(/\S/);
+    const childIndent = startIndent + 2;
+    let count = 0;
+    for (let i = range.start + 1; i < range.end; i++) {
+      const line = lines[i] || '';
+      const indent = line.search(/\S/);
+      if (indent === childIndent) count++;
+    }
+    range.childCount = count;
+    const stored = rangesByStart.get(range.start);
+    if (stored && stored.start === range.start && stored.end === range.end) {
+      stored.childCount = count;
     }
   }
 
@@ -84,6 +105,7 @@ export function visibleFoldRows(model: JsonFoldModel, collapsed: Set<number>): J
       foldable: !!range,
       collapsed: isCollapsed,
       hidden: isCollapsed && range ? range.end - range.start : 0,
+      childCount: range?.childCount ?? 0,
     });
     if (isCollapsed && range) i = range.end;
   }
