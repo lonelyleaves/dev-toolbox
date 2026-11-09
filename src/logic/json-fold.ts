@@ -81,7 +81,13 @@ export function buildJsonFoldModel(text: string): JsonFoldModel {
     for (let i = range.start + 1; i < range.end; i++) {
       const line = lines[i] || '';
       const indent = line.search(/\S/);
-      if (indent === childIndent) count++;
+      if (indent === childIndent) {
+        // 排除只包含闭合括号的行（如 `},` 或 `]`）
+        const trimmed = line.trim();
+        if (!(trimmed === '},' || trimmed === '}' || trimmed === '],' || trimmed === ']')) {
+          count++;
+        }
+      }
     }
     range.childCount = count;
     const stored = rangesByStart.get(range.start);
