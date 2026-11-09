@@ -200,6 +200,53 @@ body {
 .field-filter-option:hover { background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground)); }
 .field-filter-option.selected { color: var(--vscode-textLink-foreground, #3794ff); font-weight: 600; }
 
+/* JSON 格式化输出折叠 */
+.json-fold-area { min-height: var(--dt-json-fold-min-h, 160px); display: flex; flex-direction: column; }
+.json-fold-toolbar { flex: none; }
+.json-fold-wrap {
+  flex: 1;
+  min-height: var(--dt-json-fold-min-h, 160px);
+  display: flex;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--vscode-editor-font-size, 13px);
+  overflow: hidden;
+}
+.json-fold-gutter {
+  flex: none;
+  width: 54px;
+  overflow: hidden;
+  border-right: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-editorGutter-background, var(--vscode-input-background));
+  color: var(--vscode-editorLineNumber-foreground, var(--vscode-descriptionForeground));
+}
+.json-fold-body { flex: 1; min-width: 0; overflow: auto; }
+.json-fold-inner { position: relative; width: max-content; min-width: 100%; }
+.json-fold-line-number {
+  position: absolute; left: 0; right: 0; height: 20px; line-height: 20px;
+  padding-right: 8px; text-align: right; font-variant-numeric: tabular-nums;
+}
+.json-fold-row {
+  position: absolute; left: 0; width: 100%; height: 20px; line-height: 20px;
+  display: flex; align-items: center;
+}
+.fold-toggle {
+  flex: none; width: 18px; height: 20px; padding: 0; border: 0;
+  background: transparent; color: inherit; cursor: pointer; font: inherit;
+}
+.fold-toggle:hover { color: var(--vscode-textLink-foreground, #3794ff); }
+.fold-toggle.placeholder { visibility: hidden; }
+.json-fold-text { white-space: pre; }
+.json-fold-summary {
+  margin-left: 8px; padding: 0 4px; border-radius: 3px;
+  background: var(--vscode-badge-background, rgba(127,127,127,.25));
+  color: var(--vscode-badge-foreground, inherit);
+  font-size: 11px; opacity: .85;
+}
+
 .page-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; flex: 0 0 auto; }
 .page-head .page-icon {
   font-size: 22px;

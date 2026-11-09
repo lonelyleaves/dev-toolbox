@@ -999,8 +999,8 @@ describe('RepairPanel 基线（数据库 4 类型 / 金蝶 WebAPI / 金蝶云星
   });
 });
 
-describe('JSON 工具箱输出行号', () => {
-  it('美化后的结果使用只读代码区，并显示行号', async () => {
+describe('JSON 工具箱输出行号与折叠', () => {
+  it('美化后的结果显示行号，并可折叠完整 JSON', async () => {
     const { JsonPage } = await import('../src/webview/pages/JsonPage');
     const { container, unmount } = await mount(h(JsonPage, {}));
     const beautify = [...container.querySelectorAll('button')].find((b) => b.textContent === '美化');
@@ -1008,16 +1008,17 @@ describe('JSON 工具箱输出行号', () => {
     await act(async () => { beautify!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
     await flush();
 
-    const areas = [...container.querySelectorAll('textarea.code')] as HTMLTextAreaElement[];
-    expect(areas.length).toBeGreaterThanOrEqual(2);
-    const out = areas[areas.length - 1];
-    expect(out.readOnly).toBe(true);
-    expect(out.value.split('\n').length).toBeGreaterThan(1);
+    const lineNumbers = [...container.querySelectorAll('.json-fold-line-number')];
+    expect(lineNumbers.length).toBeGreaterThanOrEqual(2);
+    expect(lineNumbers[0].textContent).toBe('1');
 
-    const gutters = [...container.querySelectorAll('.code-gutter')];
-    const lines = (gutters[gutters.length - 1].textContent || '').trim().split('\n');
-    expect(lines[0]).toBe('1');
-    expect(lines.length).toBeGreaterThan(1);
+    const foldable = [...container.querySelectorAll('button.fold-toggle:not(.placeholder)')] as HTMLButtonElement[];
+    expect(foldable.length).toBeGreaterThan(0);
+    await act(async () => { foldable[0].dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    await flush();
+
+    expect(container.querySelectorAll('.json-fold-line-number').length).toBe(1);
+    expect(container.textContent).toContain('行');
     await unmount();
   });
 });

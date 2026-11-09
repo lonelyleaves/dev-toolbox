@@ -5,6 +5,7 @@ import {
 } from '../../logic/jsonx';
 import { buildDiffPairs } from '../../logic/diffx';
 import { CopyBtn, Section, Btn, CodeArea, useHistory, usePersistentState, clipPrefill } from '../components';
+import { JsonFoldArea } from '../json-fold-area';
 import { Prefill } from '../app';
 
 type Tab = 'format' | 'convert' | 'codegen' | 'path' | 'tree' | 'diff';
@@ -121,8 +122,8 @@ export function JsonPage({ prefill }: { prefill?: Prefill }) {
             <Btn onClick={() => doAction((d) => JSON.stringify(d, Object.keys(d as any ?? {}).sort(), 2))}>Key 排序</Btn>
             <Btn onClick={() => { setInput(toYaml(parsed.data!)); }}>转 YAML 编辑</Btn>
           </div>
-          <CodeArea value={output} readOnly minHeight={160} />
-          <CopyBtn text={() => output} label="复制结果" />
+          <JsonFoldArea value={output} minHeight={160} />
+          <CopyBtn text={() => output} label="复制完整结果" />
         </div>
       )}
 
@@ -160,8 +161,8 @@ export function JsonPage({ prefill }: { prefill?: Prefill }) {
           <div class="toolbar">
             <input type="text" class="mono grow" value={path} onInput={(e) => setPath((e.target as HTMLInputElement).value)} placeholder="$.a.b[0].c" />
           </div>
-          <CodeArea value={output} readOnly minHeight={160} />
-          <CopyBtn text={() => output} label="复制结果" />
+          <JsonFoldArea value={output} minHeight={160} />
+          <CopyBtn text={() => output} label="复制完整结果" />
         </div>
       )}
 
