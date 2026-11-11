@@ -48,4 +48,8 @@ jobs:
           fi
 
       - name: 发布到 VS Code Marketplace（Trusted Publishing / OIDC）
-        run: npx --yes @vscode/vsce publish --oidc
+        run: |
+          # 项目里的 @vscode/vsce 是 2.x（兼容本地 Node 18），不支持 --oidc；
+          # CI 用 Node 22，临时装最新版走 Trusted Publishing
+          npm install -g @vscode/vsce@latest
+          vsce publish --oidc
