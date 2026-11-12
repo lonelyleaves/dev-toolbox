@@ -10,7 +10,7 @@ import { Prefill } from '../app';
 
 type Tab = 'format' | 'convert' | 'codegen' | 'path' | 'tree' | 'diff';
 
-export function JsonPage({ prefill }: { prefill?: Prefill }) {
+export function JsonPage({ prefill, setFill }: { prefill?: Prefill; setFill?: (v: boolean) => void }) {
   const [input, setInput] = usePersistentState('json.input', '{"name":"张三","age":28,"tags":["a","b"],"address":{"city":"杭州"},"vip":true}');
   const [tab, setTab] = useState<Tab>('format');
   const [output, setOutput] = useState('');
@@ -23,6 +23,12 @@ export function JsonPage({ prefill }: { prefill?: Prefill }) {
   useEffect(() => {
     if (prefill && prefill.toolId === 'json') setInput(clipPrefill(prefill.text));
   }, [prefill]);
+
+  // 上下两个区各自滚动：整页不滚，避免滚输入框时把结果区一起推走
+  useEffect(() => {
+    setFill?.(true);
+    return () => setFill?.(false);
+  }, [setFill]);
 
   // 输入防抖：大 JSON 逐键解析会卡顿
   const [debouncedInput, setDebouncedInput] = useState(input);
@@ -87,7 +93,7 @@ export function JsonPage({ prefill }: { prefill?: Prefill }) {
   }, [tab, debouncedInput, diffB]);
 
   return (
-    <div>
+    <div class="json-page">
       <CodeArea
         value={input}
         onInput={setInput}
@@ -115,7 +121,7 @@ export function JsonPage({ prefill }: { prefill?: Prefill }) {
       </div>
 
       {tab === 'format' && (
-        <div>
+        <div class="json-pane noscroll">
           <div class="toolbar">
             <Btn onClick={() => doAction((d) => JSON.stringify(d, null, 2))}>美化</Btn>
             <Btn onClick={() => doAction((d) => JSON.stringify(d))}>压缩</Btn>
@@ -123,12 +129,11 @@ export function JsonPage({ prefill }: { prefill?: Prefill }) {
             <Btn onClick={() => { setInput(toYaml(parsed.data!)); }}>转 YAML 编辑</Btn>
           </div>
           <JsonFoldArea value={output} minHeight={160} />
-          <CopyBtn text={() => output} label="复制完整结果" />
         </div>
       )}
 
       {tab === 'convert' && (
-        <div>
+        <div class="json-pane">
           <div class="toolbar">
             <select value={convertFmt} onInput={(e) => setConvertFmt((e.target as HTMLSelectElement).value)}>
               <option value="yaml">YAML</option><option value="xml">XML</option><option value="csv">CSV</option>
@@ -138,12 +143,12 @@ export function JsonPage({ prefill }: { prefill?: Prefill }) {
             {convertFmt === 'csv' && <Btn onClick={() => { try { setInput(JSON.stringify(csvToJson(input), null, 2)); } catch { setError('CSV 解析失败'); } }}>CSV → JSON（用左侧输入）</Btn>}
           </div>
           <CodeArea value={output} readOnly minHeight={160} />
-          <CopyBtn text={() => output} label="复制结果" />
+          <div class="row"><CopyBtn text={() => output} label="复制完整结果" /></div>
         </div>
       )}
 
       {tab === 'codegen' && (
-        <div>
+        <div class="json-pane">
           <div class="toolbar">
             <select value={codegenLang} onInput={(e) => setCodegenLang((e.target as HTMLSelectElement).value)}>
               <option value="ts">TypeScript</option><option value="java">Java</option>
@@ -152,24 +157,25 @@ export function JsonPage({ prefill }: { prefill?: Prefill }) {
             <Btn primary onClick={() => doAction((d) => (generateTypes(d) as any)[codegenLang])}>生成</Btn>
           </div>
           <CodeArea value={output} readOnly minHeight={160} />
-          <CopyBtn text={() => output} label="复制代码" />
+          <div class="row"><CopyBtn text={() => output} label="复制代码" /></div>
         </div>
       )}
 
       {tab === 'path' && (
-        <div>
+        <div class="json-pane noscroll">
           <div class="toolbar">
             <input type="text" class="mono grow" value={path} onInput={(e) => setPath((e.target as HTMLInputElement).value)} placeholder="$.a.b[0].c" />
           </div>
           <JsonFoldArea value={output} minHeight={160} />
-          <CopyBtn text={() => output} label="复制完整结果" />
         </div>
       )}
 
-      {tab === 'tree' && parsed.ok && <JsonTree data={parsed.data} />}
+      {tab === 'tree' && parsed.ok && (
+        <div class="json-pane"><JsonTree data={parsed.data} /></div>
+      )}
 
       {tab === 'diff' && (
-        <div>
+        <div class="json-pane">
           <CodeArea class="grow" value={diffB} onInput={setDiffB} minHeight={90} placeholder="粘贴第二份 JSON 进行结构对比" />
           {diffOut && 'error' in (diffOut as any) && <div class="error-text">{(diffOut as any).error}</div>}
           {diffOut && 'pairs' in (diffOut as any) && (

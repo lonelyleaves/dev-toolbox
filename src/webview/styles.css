@@ -200,8 +200,37 @@ body {
 .field-filter-option:hover { background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground)); }
 .field-filter-option.selected { color: var(--vscode-textLink-foreground, #3794ff); font-weight: 600; }
 
+/* JSON 工具箱：输入区 + 结果区各自独立滚动 */
+.json-page { display: flex; flex-direction: column; height: 100%; min-height: 0; gap: 8px; }
+.json-page > .toolbar { flex: none; }
+.json-page > .code-wrap { flex: none; }
+.json-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: auto;
+}
+/* 折叠区自己滚：外层不再开滚动，否则会出现两个嵌套滚动条 */
+.json-pane.noscroll { overflow: hidden; }
+.json-pane > .toolbar,
+.json-pane > .row { flex: none; }
+.json-pane > .code-wrap { flex: 1 1 auto; min-height: 0; }
+.json-pane > .code-wrap > textarea.code { min-height: 0; height: 100%; }
+.json-pane > .json-fold-area { flex: 1 1 auto; min-height: 0; }
+.json-pane > .json-fold-area > .json-fold-wrap { min-height: 0; }
+
 /* JSON 格式化输出折叠 */
 .json-fold-area { min-height: var(--dt-json-fold-min-h, 160px); display: flex; flex-direction: column; }
+/* 隐藏的全量文本：只给 Ctrl/Cmd+A 选中后复制用，不参与布局 */
+.json-fold-clip {
+  position: fixed; top: 0; left: -99999px;
+  width: 1px; height: 1px;
+  padding: 0; border: 0; opacity: 0;
+  white-space: pre; overflow: hidden;
+  pointer-events: none;
+}
 .json-fold-toolbar { flex: none; }
 .json-fold-wrap {
   flex: 1;

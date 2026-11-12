@@ -1021,6 +1021,32 @@ describe('JSON 工具箱输出行号与折叠', () => {
     expect(container.textContent).toContain('行');
     await unmount();
   });
+
+  it('Ctrl+A 只选中完整 JSON，不会把整页 UI 一起选中', async () => {
+    const { JsonPage } = await import('../src/webview/pages/JsonPage');
+    const { container, unmount } = await mount(h(JsonPage, {}));
+    const beautify = [...container.querySelectorAll('button')].find((b) => b.textContent === '美化');
+    await act(async () => { beautify!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    await flush();
+
+    const clip = container.querySelector('textarea.json-fold-clip') as HTMLTextAreaElement;
+    expect(clip).toBeTruthy();
+    expect(clip.value).toContain('"name"');
+
+    const wrap = container.querySelector('.json-fold-wrap') as HTMLElement;
+    let prevented = false;
+    await act(async () => {
+      const ev = new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true, cancelable: true });
+      Object.defineProperty(ev, 'preventDefault', { value: () => { prevented = true; } });
+      wrap.dispatchEvent(ev);
+    });
+
+    expect(prevented).toBe(true);
+    expect(clip.selectionStart).toBe(0);
+    expect(clip.selectionEnd).toBe(clip.value.length);
+    expect([...container.querySelectorAll('button')].some((b) => b.textContent === '复制完整 JSON')).toBe(true);
+    await unmount();
+  });
 });
 
 describe('以基线回写字典', () => {

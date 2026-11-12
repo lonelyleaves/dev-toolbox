@@ -1,6 +1,6 @@
 import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { Btn } from './components';
+import { Btn, CopyBtn } from './components';
 import { allFoldStarts, buildJsonFoldModel, visibleFoldRows } from '../logic/json-fold';
 
 const ROW_H = 20;
@@ -16,6 +16,8 @@ export function JsonFoldArea(p: {
   const [viewH, setViewH] = useState(240);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const gutterRef = useRef<HTMLDivElement | null>(null);
+  /** 隐藏的全量文本区：Ctrl/Cmd+A 选中它，复制到的就是完整 JSON（折叠区是虚拟渲染，选不到隐藏行） */
+  const clipRef = useRef<HTMLTextAreaElement | null>(null);
   const rafRef = useRef(0);
   const scrollInfoRef = useRef({ top: 0, h: 240 });
 
@@ -73,6 +75,17 @@ export function JsonFoldArea(p: {
     setCollapsed(new Set(model.allRanges.filter((r) => r.depth >= level).map((r) => r.start)));
   };
 
+  // 折叠区是 div 虚拟列表，不拦的话 Ctrl+A 会选中整页（工具栏、行号等全部复制走）
+  const onKeyDown = (e: any) => {
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+      e.preventDefault();
+      const ta = clipRef.current;
+      if (!ta) return;
+      ta.focus();
+      ta.select();
+    }
+  };
+
   return (
     <div class={`json-fold-area${p.class ? ` ${p.class}` : ''}`} style={p.minHeight ? `--dt-json-fold-min-h:${p.minHeight}px` : undefined}>
       <div class="toolbar json-fold-toolbar">
@@ -92,9 +105,19 @@ export function JsonFoldArea(p: {
             <option value="4">第 4 层</option>
           </select>
         </label>
+        <CopyBtn text={() => p.value || ''} label="复制完整 JSON" />
         <span class="small muted">{rows.length} / {model.lines.length} 行</span>
+        <span class="small muted" style="margin-left:auto">Ctrl/Cmd+A 选中完整 JSON</span>
       </div>
-      <div class="json-fold-wrap">
+      <textarea
+        ref={clipRef}
+        class="json-fold-clip"
+        readOnly
+        tabIndex={-1}
+        aria-hidden="true"
+        value={p.value || ''}
+      />
+      <div class="json-fold-wrap" tabIndex={0} onKeyDown={onKeyDown}>
         <div class="json-fold-gutter" ref={gutterRef} aria-hidden="true">
           <div class="json-fold-inner" style={`height:${totalHeight}px`}>
             {slice.map((row, i) => (
