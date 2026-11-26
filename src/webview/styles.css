@@ -276,6 +276,26 @@ body {
   font-size: 11px; opacity: .85;
 }
 
+/* JSON 解析错误的中文定位块 */
+.json-error-detail {
+  flex: none;
+  margin: 2px 0 6px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--vscode-errorForeground, #f48771) 45%, transparent);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--vscode-errorForeground, #f48771) 8%, transparent);
+}
+.json-error-snippet {
+  margin: 6px 0 4px;
+  padding: 6px 8px;
+  max-height: 96px;
+  overflow: auto;
+  white-space: pre;
+  border-radius: 3px;
+  background: var(--vscode-textCodeBlock-background, rgba(0, 0, 0, .2));
+}
+
 .page-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; flex: 0 0 auto; }
 .page-head .page-icon {
   font-size: 22px;

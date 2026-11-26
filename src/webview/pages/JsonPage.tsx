@@ -4,6 +4,7 @@ import {
   parseJsonLoose, toYaml, toXml, toCsv, csvToJson, generateTypes, jsonPath,
 } from '../../logic/jsonx';
 import { buildDiffPairs } from '../../logic/diffx';
+import { JsonErrorInfo } from '../../logic/json-error';
 import { CopyBtn, Section, Btn, CodeArea, useHistory, usePersistentState, clipPrefill } from '../components';
 import { JsonFoldArea } from '../json-fold-area';
 import { Prefill } from '../app';
@@ -15,6 +16,8 @@ export function JsonPage({ prefill, setFill }: { prefill?: Prefill; setFill?: (v
   const [tab, setTab] = useState<Tab>('format');
   const [output, setOutput] = useState('');
   const [error, setError] = useState('');
+  /** 结构化错误：位置 + 出错片段 + 排查建议 */
+  const [errorInfo, setErrorInfo] = useState<JsonErrorInfo | undefined>();
   const [repaired, setRepaired] = useState(false);
   const [path, setPath] = useState('$.address.city');
   const [diffB, setDiffB] = useState('');
@@ -43,17 +46,20 @@ export function JsonPage({ prefill, setFill }: { prefill?: Prefill; setFill?: (v
     // 空输入不算错误（之前会一直显示 "Unexpected end of JSON input"）
     if (!debouncedInput.trim()) {
       setError('');
+      setErrorInfo(undefined);
       setOutput('');
       setRepaired(false);
       return;
     }
     if (!parsed.ok) {
       setError(parsed.error || 'JSON 无效');
+      setErrorInfo(parsed.errorInfo);
       setOutput('');
       setRepaired(false);
       return;
     }
     setError('');
+    setErrorInfo(undefined);
     setRepaired(!!parsed.repaired);
     try {
       switch (tab) {
@@ -66,6 +72,7 @@ export function JsonPage({ prefill, setFill }: { prefill?: Prefill; setFill?: (v
       }
     } catch (e: any) {
       setError(String(e?.message || e));
+      setErrorInfo(undefined);
     }
   }, [debouncedInput, tab, path, parsed]);
 
@@ -102,7 +109,7 @@ export function JsonPage({ prefill, setFill }: { prefill?: Prefill; setFill?: (v
       />
       <div class="toolbar">
         {!input.trim() ? <span class="badge">等待输入</span>
-          : error ? <span class="badge err">✗ {error}</span>
+          : error ? <span class="badge err" title={errorInfo?.raw || error}>✗ JSON 无法解析</span>
             : <span class="badge ok">✓ JSON 合法{repaired ? '（已自动修复）' : ''}</span>}
         {history.items.length > 0 && (
           <select onChange={(e) => setInput(history.items[Number((e.target as HTMLSelectElement).value)])} value="">
@@ -111,6 +118,17 @@ export function JsonPage({ prefill, setFill }: { prefill?: Prefill; setFill?: (v
           </select>
         )}
       </div>
+
+      {errorInfo && (
+        <div class="json-error-detail">
+          <div class="small"><b>✗ {errorInfo.title}</b></div>
+          {errorInfo.snippet && (
+            <pre class="json-error-snippet mono small">{errorInfo.snippet}{errorInfo.caret ? `\n${errorInfo.caret}` : ''}</pre>
+          )}
+          {errorInfo.hint && <div class="small muted">→ {errorInfo.hint}</div>}
+          {errorInfo.raw && <div class="small muted json-error-raw">原始信息：{errorInfo.raw}</div>}
+        </div>
+      )}
 
       <div class="toolbar">
         {(['format', 'convert', 'codegen', 'path', 'tree', 'diff'] as Tab[]).map((t) => (

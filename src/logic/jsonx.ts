@@ -1,5 +1,6 @@
 import yaml from 'js-yaml';
 import { normalizeInput } from './text';
+import { describeJsonError, JsonErrorInfo } from './json-error';
 
 /** 修复常见非法 JSON：注释、单引号、尾逗号、未加引号的 key、NaN/undefined */
 export function repairJson(text: string): string {
@@ -9,7 +10,13 @@ export function repairJson(text: string): string {
     const ch = text[i];
     const next = text[i + 1];
     if (inStr) {
-      if (ch === '\\') { out += ch + (next ?? ''); i++; continue; }
+      if (ch === '\\') {
+        // Python repr 里的 \' 在 JSON 里是非法转义，还原成普通单引号
+        if (inStr === "'" && next === "'") { out += "'"; i++; continue; }
+        out += ch + (next ?? '');
+        i++;
+        continue;
+      }
       if (ch === inStr) { inStr = null; out += '"'; continue; }
       out += ch === '"' ? '\\"' : ch;
       continue;
@@ -33,15 +40,22 @@ export function repairJson(text: string): string {
       let word = '';
       let j = i;
       while (j < text.length && /[\w$.]/.test(text[j])) word += text[j++];
+      // Python 字符串前缀 b'x' / u'x' / r'x' / rb'x'：丢掉前缀，后面当字符串处理
+      if ((text[j] === "'" || text[j] === '"') && /^(b|u|r|br|rb|f|rf|fr)$/i.test(word)) {
+        i = j - 1;
+        continue;
+      }
       i = j - 1;
-      if (word === 'NaN' || word === 'undefined' || word === 'Infinity' || word === '-Infinity') { out += 'null'; continue; }
-      if (/^(true|false|null)$/.test(word)) { out += word; continue; }
-      if (/^-?\d/.test(word)) { out += word; continue; }
-      // 裸标识符：若后面跟 : 则是 key，加引号；否则当字符串
+      const lw = word.toLowerCase();
+      if (lw === 'nan' || lw === 'undefined' || lw === 'infinity') { out += 'null'; continue; }
+      if (lw === 'true' || lw === 'false') { out += lw; continue; }
+      if (lw === 'none' || lw === 'null' || lw === 'nil') { out += 'null'; continue; }
+      // 后面紧跟 : 说明是对象 key，不管是裸标识符还是数字都得加双引号
       let k = j;
       while (k < text.length && /\s/.test(text[k])) k++;
-      if (text[k] === ':') out += `"${word}"`;
-      else out += `"${word}"`;
+      if (text[k] === ':') { out += `"${word}"`; continue; }
+      if (/^-?\d+(\.\d+)?([eE][-+]?\d+)?$/.test(word)) { out += word; continue; }
+      out += `"${word}"`;
       continue;
     }
     out += ch;
@@ -56,20 +70,43 @@ export interface JsonParseResult {
   data?: unknown;
   error?: string;
   repaired?: boolean;
+  /** 结构化错误：位置 + 片段 + 排查建议 */
+  errorInfo?: JsonErrorInfo;
 }
 
 export function parseJsonLoose(text: string): JsonParseResult {
   // BOM（\uFEFF）会让 JSON.parse 直接报 "Unexpected token"，复制粘贴场景很常见
   const source = normalizeInput(text).replace(/^\s+|\s+$/g, '');
+  if (!source) {
+    return {
+      ok: false,
+      error: '内容为空',
+      errorInfo: { raw: 'empty', title: '内容为空', reason: '内容为空', hint: '粘贴或输入 JSON 后再试。' },
+    };
+  }
   try {
     return { ok: true, data: JSON.parse(source) };
   } catch (e: any) {
+    let fixed = source;
+    let repairBroken = false;
     try {
-      const fixed = repairJson(source);
-      const data = JSON.parse(fixed);
-      return { ok: true, data, repaired: true };
+      fixed = repairJson(source);
+    } catch {
+      repairBroken = true;
+    }
+    try {
+      return { ok: true, data: JSON.parse(fixed), repaired: fixed !== source };
     } catch (e2: any) {
-      return { ok: false, error: e?.message || String(e) };
+      /* 以前这里报的是第一次 JSON.parse 的原文错误（比如单引号），
+         但单引号已经被修好了，用户看到的是完全对不上的位置。
+         现在报修复后文本的真正失败点 */
+      const info = describeJsonError(repairBroken ? e : e2, repairBroken ? source : fixed, {
+        repaired: !repairBroken && fixed !== source,
+      });
+      if (!repairBroken && fixed !== source && fixed.length !== source.length) {
+        info.hint = `${info.hint || ''}（位置按自动修复后的文本计算）`;
+      }
+      return { ok: false, error: info.title, errorInfo: info };
     }
   }
 }
