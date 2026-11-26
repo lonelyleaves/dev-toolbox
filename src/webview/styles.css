@@ -357,6 +357,8 @@ textarea.code {
   display: flex;
   align-items: stretch;
   width: 100%;
+  /* 兼容不支持 contain: block-size 的内核：行号栏再长也不能把整块顶到页面外 */
+  max-height: min(70vh, 900px);
   border: 1px solid var(--vscode-input-border, color-mix(in srgb, var(--vscode-foreground) 18%, transparent));
   border-radius: var(--radius-sm);
   background: var(--vscode-input-background);
@@ -388,6 +390,8 @@ textarea.code {
   word-break: break-all;
   overflow-x: hidden;
   overflow-y: auto;
+  /* 滚动条位置固定：否则滚动条出现/消失会改变 clientWidth → 折行数变 → 行号来回跳（抖动） */
+  scrollbar-gutter: stable;
   tab-size: 4;
 }
 .code-wrap > textarea.code:focus {
@@ -404,6 +408,9 @@ textarea.code {
   min-width: 36px;
   padding: 8px 8px 8px 6px;
   overflow: hidden;
+  /* 关键：行号文本是按「视觉行」重复的，内容高度可达几十倍行高。
+     不做块轴尺寸隔离，flex 行高会被它顶起来，整块跟着内容多少来回抻（抖动） */
+  contain: block-size;
   text-align: right;
   white-space: pre;
   font-family: inherit;
