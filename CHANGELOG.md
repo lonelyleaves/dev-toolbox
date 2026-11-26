@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- **JSON 结构对比改用语义路径视图**：不再比文本行，按 JSON 路径输出差异（如 `$.order_list[order_id=A].qty`）并同时展示左值/右值；数组按稳定标识自动对齐（id / FID / order_id / FNumber / code / sku / name 等），顺序不同不再产生整块假 +/-；支持路径过滤、忽略字段（如 response_time）、手动指定匹配键、复制 Markdown 差异报告；保留文本行视图切换
+
 ### Changed
 - **JSON 工具箱布局**：输入区与结果区各自独立滚动（fill 模式），整页不再跟着滚，结果区高度自适应窗口
 - **JSON 结果复制**：结果区工具栏新增「复制完整 JSON」；`Ctrl/Cmd+A` 在结果区内只选中完整 JSON（此前会选中整页 UI，折叠行也复制不到）

@@ -1047,6 +1047,29 @@ describe('JSON 工具箱输出行号与折叠', () => {
     expect([...container.querySelectorAll('button')].some((b) => b.textContent === '复制完整 JSON')).toBe(true);
     await unmount();
   });
+
+  it('结构对比默认用语义路径视图，给出路径与左右值', async () => {
+    const { JsonPage } = await import('../src/webview/pages/JsonPage');
+    const { container, unmount } = await mount(h(JsonPage, {}));
+    const diffTab = [...container.querySelectorAll('button')].find((b) => b.textContent === '结构对比');
+    expect(diffTab).toBeTruthy();
+    await act(async () => { diffTab!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    await flush();
+
+    const ta = container.querySelector('.json-diff-input textarea') as HTMLTextAreaElement;
+    expect(ta).toBeTruthy();
+    await act(async () => {
+      ta.value = '{"name":"李四","age":28,"tags":["a","b"],"address":{"city":"苏州"},"vip":true}';
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await flush();
+
+    const paths = [...container.querySelectorAll('.json-diff-path')].map((td) => td.textContent);
+    expect(paths).toContain('$.name');
+    expect(paths).toContain('$.address.city');
+    expect(container.querySelector('.json-diff-table-wrap')).toBeTruthy();
+    await unmount();
+  });
 });
 
 describe('以基线回写字典', () => {

@@ -296,6 +296,37 @@ body {
   background: var(--vscode-textCodeBlock-background, rgba(0, 0, 0, .2));
 }
 
+/* JSON 结构对比（语义路径视图） */
+.json-diff-input { flex: none; }
+.json-diff-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.json-diff-panel > .toolbar { flex: none; }
+.json-diff-table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--radius-sm);
+}
+.json-diff-table-wrap table { margin: 0; }
+.json-diff-table-wrap thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--vscode-editor-background, var(--vscode-panel-background));
+}
+.json-diff-path {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .page-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; flex: 0 0 auto; }
 .page-head .page-icon {
   font-size: 22px;

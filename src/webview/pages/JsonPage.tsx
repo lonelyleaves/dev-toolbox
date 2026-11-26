@@ -4,6 +4,7 @@ import {
   parseJsonLoose, toYaml, toXml, toCsv, csvToJson, generateTypes, jsonPath,
 } from '../../logic/jsonx';
 import { buildDiffPairs } from '../../logic/diffx';
+import { diffJson, jsonDiffMarkdown } from '../../logic/json-diff';
 import { JsonErrorInfo } from '../../logic/json-error';
 import { CopyBtn, Section, Btn, CodeArea, useHistory, usePersistentState, clipPrefill } from '../components';
 import { JsonFoldArea } from '../json-fold-area';
@@ -21,6 +22,11 @@ export function JsonPage({ prefill, setFill }: { prefill?: Prefill; setFill?: (v
   const [repaired, setRepaired] = useState(false);
   const [path, setPath] = useState('$.address.city');
   const [diffB, setDiffB] = useState('');
+  /** 结构对比：语义路径视图 / 文本行视图 */
+  const [diffView, setDiffView] = useState<'semantic' | 'line'>('semantic');
+  const [diffPathFilter, setDiffPathFilter] = useState('');
+  const [diffIgnore, setDiffIgnore] = useState('');
+  const [diffArrayKey, setDiffArrayKey] = useState('');
   const history = useHistory('json');
 
   useEffect(() => {
@@ -95,9 +101,23 @@ export function JsonPage({ prefill, setFill }: { prefill?: Prefill; setFill?: (v
     const a = parseJsonLoose(debouncedInput);
     const b = parseJsonLoose(diffB);
     if (!a.ok || !b.ok) return { error: '两侧都需要是合法（或可修复的）JSON' };
+    const ignoreKeys = diffIgnore.split(',').map((s) => s.trim()).filter(Boolean);
+    const semantic = diffJson(a.data, b.data, {
+      ignoreKeys,
+      arrayKey: diffArrayKey.trim() || undefined,
+    });
     const { pairs, stats } = buildDiffPairs(JSON.stringify(a.data, null, 2), JSON.stringify(b.data, null, 2));
-    return { pairs, stats };
-  }, [tab, debouncedInput, diffB]);
+    return { semantic, pairs, stats };
+  }, [tab, debouncedInput, diffB, diffIgnore, diffArrayKey]);
+
+  // 大差异量先截屏，避免几百行一次性渲染卡住
+  const diffRows = useMemo(() => {
+    const s = diffOut?.semantic;
+    if (!s) return [];
+    const kw = diffPathFilter.trim().toLowerCase();
+    const list = kw ? s.entries.filter((e) => e.path.toLowerCase().includes(kw)) : s.entries;
+    return list.slice(0, 300);
+  }, [diffOut, diffPathFilter]);
 
   return (
     <div class="json-page">
@@ -193,23 +213,67 @@ export function JsonPage({ prefill, setFill }: { prefill?: Prefill; setFill?: (v
       )}
 
       {tab === 'diff' && (
-        <div class="json-pane">
-          <CodeArea class="grow" value={diffB} onInput={setDiffB} minHeight={90} placeholder="粘贴第二份 JSON 进行结构对比" />
+        <div class="json-pane noscroll">
+          <div class="json-diff-input">
+            <CodeArea value={diffB} onInput={setDiffB} minHeight={90} placeholder="粘贴第二份 JSON 进行结构对比" />
+          </div>
           {diffOut && 'error' in (diffOut as any) && <div class="error-text">{(diffOut as any).error}</div>}
-          {diffOut && 'pairs' in (diffOut as any) && (
-            <div>
-              <div class="row small">
-                <span class="badge added">+{diffOut.stats!.added}</span>
-                <span class="badge deleted">-{diffOut.stats!.removed}</span>
-                <span class="badge modified">~{diffOut.stats!.changed}</span>
+          {diffOut && 'semantic' in (diffOut as any) && (
+            <div class="json-diff-panel">
+              <div class="toolbar">
+                <button class={`btn${diffView === 'semantic' ? ' primary' : ''}`} onClick={() => setDiffView('semantic')}>语义路径</button>
+                <button class={`btn${diffView === 'line' ? ' primary' : ''}`} onClick={() => setDiffView('line')}>文本行</button>
+                <input class="mono" style="width:150px" value={diffPathFilter} onInput={(e) => setDiffPathFilter((e.target as HTMLInputElement).value)} placeholder="按路径过滤" />
+                <input class="mono" style="width:180px" value={diffIgnore} onInput={(e) => setDiffIgnore((e.target as HTMLInputElement).value)} placeholder="忽略字段，逗号分隔" />
+                <input class="mono" style="width:140px" value={diffArrayKey} onInput={(e) => setDiffArrayKey((e.target as HTMLInputElement).value)} placeholder="数组匹配字段" />
+                <span class="badge modified">变更 {diffOut.semantic!.stats.changed}</span>
+                <span class="badge added">新增 {diffOut.semantic!.stats.added}</span>
+                <span class="badge deleted">删除 {diffOut.semantic!.stats.removed}</span>
+                <CopyBtn text={() => jsonDiffMarkdown(diffOut.semantic!)} label="复制差异报告" />
               </div>
-              <CodeArea
-                readOnly
-                minHeight={120}
-                value={diffOut.pairs!.filter((p: any) => p.type !== 'equal').map((p: any) =>
-                  `${p.type === 'ins' ? '+' : p.type === 'del' ? '-' : '~'} ${(p.right || p.left || []).map((w: any) => w.text).join('')}`
-                ).join('\n') || '两份 JSON 格式化后完全一致'}
-              />
+              {diffOut.semantic!.arrayKeys.length > 0 && (
+                <div class="small muted">
+                  数组已按稳定标识对齐：{diffOut.semantic!.arrayKeys.map((a) => `${a.path} → ${a.key}`).join('；')}
+                </div>
+              )}
+              {diffView === 'semantic' ? (
+                <div class="json-diff-table-wrap">
+                  <table class="tbl small">
+                    <thead><tr><th style="width:88px">类型</th><th>路径</th><th>左值</th><th>右值</th></tr></thead>
+                    <tbody>
+                      {diffRows.map((e, i) => (
+                        <tr key={`${e.path}-${i}`}>
+                          <td>
+                            <span class={`badge ${e.kind === 'added' ? 'added' : e.kind === 'removed' ? 'deleted' : 'modified'}`}>
+                              {e.kind === 'added' ? '新增' : e.kind === 'removed' ? '删除' : '变更'}
+                            </span>
+                            {e.typeChanged && <span class="small muted"> 类型变</span>}
+                          </td>
+                          <td class="mono json-diff-path" title={e.path}>{e.path}</td>
+                          <td class="mono">{e.leftText || '—'}</td>
+                          <td class="mono">{e.rightText || '—'}</td>
+                        </tr>
+                      ))}
+                      {!diffRows.length && (
+                        <tr><td colSpan={4} class="muted">{diffPathFilter ? '没有匹配该路径的差异' : '两份 JSON 语义一致（字段值全部相同）'}</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                  {(diffOut.semantic!.truncated || diffRows.length >= 300) && (
+                    <div class="small muted" style="padding:4px 6px">
+                      共 {diffOut.semantic!.totalDiffs} 处差异，当前最多展示 300 行；用路径过滤或忽略字段缩小范围
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <CodeArea
+                  readOnly
+                  minHeight={120}
+                  value={diffOut.pairs!.filter((p: any) => p.type !== 'equal').map((p: any) =>
+                    `${p.type === 'ins' ? '+' : p.type === 'del' ? '-' : '~'} ${(p.right || p.left || []).map((w: any) => w.text).join('')}`
+                  ).join('\n') || '两份 JSON 格式化后完全一致'}
+                />
+              )}
             </div>
           )}
         </div>
